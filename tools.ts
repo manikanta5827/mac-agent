@@ -4,7 +4,7 @@ import {
   ALLOWED_APPS, MODIFIERS, NAMED_KEYS, ensureOnScreen, capture, click, getScreenInfo,
   log, moveMouse, openApp, pressKey, typeText, type ClickKind, type Shot,
 } from './computer';
-import { toScreenPoint } from './mapper';
+import { mapScreenToPoint } from './mapper';
 
 const point = {
   x: z.number().describe('X coordinate on the screen'),
@@ -23,25 +23,23 @@ async function shotToModel(output: Shot & { note: string }) {
   };
 }
 
-/** Shared path for every action that takes a coordinate: map → bounds check → act → log. */
-async function atPoint(name: string, raw: { x: number; y: number }, act: (x: number, y: number) => Promise<void>) {
-  const mapped = toScreenPoint(raw.x, raw.y);
-  try {
-    await ensureOnScreen(mapped.x, mapped.y);
-    await act(mapped.x, mapped.y);
-    await log({ tool: name, raw, mapped, ok: true });
-    return `ok: ${name} at screen point (${mapped.x}, ${mapped.y})`;
-  } catch (err) {
-    await log({ tool: name, raw, mapped, ok: false, error: String(err) });
-    throw err;
-  }
-}
-
 function clickTool(kind: ClickKind, description: string) {
+  const name = `${kind}_click`;
   return tool({
     description,
     inputSchema: z.object(point),
-    execute: (input) => atPoint(`${kind}_click`, input, (x, y) => click(kind, x, y)),
+    execute: async (raw) => {
+      const mapped = mapScreenToPoint(raw.x, raw.y);
+      try {
+        await ensureOnScreen(mapped.x, mapped.y);
+        await click(kind, mapped.x, mapped.y);
+        await log({ tool: name, raw, mapped, ok: true });
+        return `ok: ${name} at screen point (${mapped.x}, ${mapped.y})`;
+      } catch (err) {
+        await log({ tool: name, raw, mapped, ok: false, error: String(err) });
+        throw err;
+      }
+    },
   });
 }
 
@@ -68,10 +66,14 @@ const zoom = tool({
     height: z.number().positive().describe('Rectangle height, extending down from y'),
   }),
   execute: async ({ x, y, width, height }) => {
-    const topLeft = toScreenPoint(x, y);
-    const bottomRight = toScreenPoint(x + width, y + height);
+    const topLeft = mapScreenToPoint(x, y);
+    const bottomRight = mapScreenToPoint(x + width, y + height);
     const region = { x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y };
-    await ensureOnScreen(region.x, region.y);
+    if (region.width < 1 || region.height < 1) throw new Error('Zoom region is too small');
+    // Both corners must be on screen. The bottom-right edge itself is exclusive (like x < 1440),
+    // so the last pixel inside the region is (bottomRight - 1).
+    await ensureOnScreen(topLeft.x, topLeft.y);
+    await ensureOnScreen(bottomRight.x - 1, bottomRight.y - 1);
     const shot = await capture(region);
     await log({ tool: 'zoom', raw: { x, y, width, height }, region, path: shot.path, width: shot.width, height: shot.height });
     return { ...shot, note: `Zoomed view of region x=${x} y=${y} w=${width} h=${height}, image is ${shot.width}x${shot.height} pixels.` };
@@ -82,7 +84,18 @@ const zoom = tool({
 const move_mouse = tool({
   description: 'Move the mouse pointer without clicking.',
   inputSchema: z.object(point),
-  execute: (input) => atPoint('move_mouse', input, moveMouse),
+  execute: async (raw) => {
+    const mapped = mapScreenToPoint(raw.x, raw.y);
+    try {
+      await ensureOnScreen(mapped.x, mapped.y);
+      await moveMouse(mapped.x, mapped.y);
+      await log({ tool: 'move_mouse', raw, mapped, ok: true });
+      return `ok: move_mouse to screen point (${mapped.x}, ${mapped.y})`;
+    } catch (err) {
+      await log({ tool: 'move_mouse', raw, mapped, ok: false, error: String(err) });
+      throw err;
+    }
+  },
 });
 
 const type_text = tool({
