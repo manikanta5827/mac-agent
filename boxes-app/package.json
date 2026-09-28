@@ -1,0 +1,14 @@
+{
+  "name": "boxes-app",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "bun build src/main.ts --outdir dist --target node --format cjs --external electron && bun build src/renderer.ts --outdir dist --target browser",
+    "start": "bun run build && electron ."
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "electron": "^44.4.5",
+    "typescript": "^7.0.2"
+  }
+}
