@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { tool, type ToolSet } from 'ai';
 import {
-  ALLOWED_APPS, MODIFIERS, NAMED_KEYS, assertOnScreen, capture, click, getScreenInfo,
+  ALLOWED_APPS, MODIFIERS, NAMED_KEYS, ensureOnScreen, capture, click, getScreenInfo,
   log, moveMouse, openApp, pressKey, typeText, type ClickKind, type Shot,
 } from './computer';
 import { toScreenPoint } from './mapper';
@@ -27,7 +27,7 @@ async function shotToModel(output: Shot & { note: string }) {
 async function atPoint(name: string, raw: { x: number; y: number }, act: (x: number, y: number) => Promise<void>) {
   const mapped = toScreenPoint(raw.x, raw.y);
   try {
-    await assertOnScreen(mapped.x, mapped.y);
+    await ensureOnScreen(mapped.x, mapped.y);
     await act(mapped.x, mapped.y);
     await log({ tool: name, raw, mapped, ok: true });
     return `ok: ${name} at screen point (${mapped.x}, ${mapped.y})`;
@@ -62,15 +62,16 @@ const zoom = tool({
     'Look closer at a rectangle of the screen, returned at full detail. Use it for small targets. ' +
     'Coordinates for clicks are still full-screen coordinates, not coordinates inside the zoomed image.',
   inputSchema: z.object({
-    ...point,
-    width: z.number().positive().describe('Rectangle width'),
-    height: z.number().positive().describe('Rectangle height'),
+    x: z.number().describe('X of the rectangle\'s TOP-LEFT corner on the screen'),
+    y: z.number().describe('Y of the rectangle\'s TOP-LEFT corner on the screen'),
+    width: z.number().positive().describe('Rectangle width, extending to the right of x'),
+    height: z.number().positive().describe('Rectangle height, extending down from y'),
   }),
   execute: async ({ x, y, width, height }) => {
     const topLeft = toScreenPoint(x, y);
     const bottomRight = toScreenPoint(x + width, y + height);
     const region = { x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y };
-    await assertOnScreen(region.x, region.y);
+    await ensureOnScreen(region.x, region.y);
     const shot = await capture(region);
     await log({ tool: 'zoom', raw: { x, y, width, height }, region, path: shot.path, width: shot.width, height: shot.height });
     return { ...shot, note: `Zoomed view of region x=${x} y=${y} w=${width} h=${height}, image is ${shot.width}x${shot.height} pixels.` };

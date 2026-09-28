@@ -26,5 +26,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
-  }
+  },
+  // boxes-app is a separate Electron project with its own tsconfig (DOM + Node types).
+  "exclude": ["node_modules", "boxes-app"]
 }

@@ -64,7 +64,7 @@ export async function getScreenInfo(): Promise<ScreenInfo> {
 }
 
 /** Throws if a point is outside the screen, so the model gets an error instead of a silent miss. */
-export async function assertOnScreen(x: number, y: number): Promise<void> {
+export async function ensureOnScreen(x: number, y: number): Promise<void> {
   const s = await getScreenInfo();
   if (x < 0 || y < 0 || x >= s.pointsWidth || y >= s.pointsHeight) {
     throw new Error(`Point (${x}, ${y}) is outside the screen (0..${s.pointsWidth - 1}, 0..${s.pointsHeight - 1})`);
