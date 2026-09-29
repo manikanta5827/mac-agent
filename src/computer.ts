@@ -97,25 +97,42 @@ export async function typeText(text: string): Promise<void> {
   await cliclick([`t:${text}`]);
 }
 
-// Named keys cliclick's kp: command accepts (from `cliclick -h`).
-export const NAMED_KEYS = [
-  'return', 'enter', 'tab', 'space', 'esc', 'delete', 'fwd-delete',
-  'arrow-up', 'arrow-down', 'arrow-left', 'arrow-right',
-  'home', 'end', 'page-up', 'page-down',
-  'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
-] as const;
-export const MODIFIERS = ['cmd', 'shift', 'alt', 'ctrl', 'fn'] as const;
+// macOS key codes for named keys. These are pressed through System Events (osascript),
+// because Chrome ignores cliclick's `kp:` presses (tested: kp:return typed nothing in the
+// address bar, System Events `key code 36` worked).
+const KEY_CODES = {
+  'return': 36, 'enter': 76, 'tab': 48, 'space': 49, 'esc': 53, 'delete': 51, 'fwd-delete': 117,
+  'arrow-up': 126, 'arrow-down': 125, 'arrow-left': 123, 'arrow-right': 124,
+  'home': 115, 'end': 119, 'page-up': 116, 'page-down': 121,
+  'f1': 122, 'f2': 120, 'f3': 99, 'f4': 118, 'f5': 96, 'f6': 97,
+  'f7': 98, 'f8': 100, 'f9': 101, 'f10': 109, 'f11': 103, 'f12': 111,
+} as const;
+export const NAMED_KEYS = Object.keys(KEY_CODES) as (keyof typeof KEY_CODES)[];
+
+// Modifier name → cliclick name (kd:/ku:) and AppleScript name (`using {...}`).
+const MODIFIER_NAMES = {
+  cmd: { cliclick: 'cmd', applescript: 'command down' },
+  shift: { cliclick: 'shift', applescript: 'shift down' },
+  alt: { cliclick: 'alt', applescript: 'option down' },
+  ctrl: { cliclick: 'ctrl', applescript: 'control down' },
+} as const;
+export const MODIFIERS = Object.keys(MODIFIER_NAMES) as (keyof typeof MODIFIER_NAMES)[];
 
 /** A named key (e.g. "return") or a single character (e.g. "l"), optionally with modifiers held down. */
-export async function pressKey(key: string, modifiers: string[] = []): Promise<void> {
-  let press: string;
-  if ((NAMED_KEYS as readonly string[]).includes(key)) press = `kp:${key}`;
-  else if ([...key].length === 1) press = `t:${key}`;
-  else throw new Error(`Unknown key "${key}". Use a single character or one of: ${NAMED_KEYS.join(', ')}`);
+export async function pressKey(key: string, modifiers: (keyof typeof MODIFIER_NAMES)[] = []): Promise<void> {
+  if (key in KEY_CODES) {
+    // e.g. tell application "System Events" to key code 36 using {command down}
+    // The script is built only from the fixed tables above, never from free text.
+    const using = modifiers.length ? ` using {${modifiers.map((m) => MODIFIER_NAMES[m].applescript).join(', ')}}` : '';
+    await run(['osascript', '-e', `tell application "System Events" to key code ${KEY_CODES[key as keyof typeof KEY_CODES]}${using}`]);
+    return;
+  }
+  if ([...key].length !== 1) throw new Error(`Unknown key "${key}". Use a single character or one of: ${NAMED_KEYS.join(', ')}`);
 
-  if (modifiers.length === 0) return cliclick([press]);
-  const mods = modifiers.join(',');
-  await cliclick([`kd:${mods}`, press, `ku:${mods}`]);
+  // Single characters (with or without modifiers) work with cliclick, e.g. cmd+l.
+  if (modifiers.length === 0) return cliclick([`t:${key}`]);
+  const mods = modifiers.map((m) => MODIFIER_NAMES[m].cliclick).join(',');
+  await cliclick([`kd:${mods}`, `t:${key}`, `ku:${mods}`]);
 }
 
 // ---------- screenshots (screencapture) ----------
@@ -155,7 +172,7 @@ export async function capture(region?: { x: number; y: number; width: number; he
 // ---------- apps ----------
 
 /** Apps the agent may launch. Anything else has to be opened through the GUI (e.g. Spotlight). */
-export const ALLOWED_APPS = ['Google Chrome', 'Safari', 'TextEdit', 'Finder', 'Notes', 'Calculator'] as const;
+export const ALLOWED_APPS = ['Google Chrome', 'TextEdit', 'Finder', 'Calculator'] as const;
 
 export async function openApp(app: string, url?: string): Promise<void> {
   if (!(ALLOWED_APPS as readonly string[]).includes(app)) {
