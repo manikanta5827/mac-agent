@@ -29,7 +29,11 @@ const agent = new ToolLoopAgent({
             '(4) If a click does nothing, something may be covering it (popup, banner, menu): find its close button in the snapshot first. ' +
             '(5) If browser_fill does not put the text in a rich editor, click the editor first, then fill again. ' +
             '(6) Check the result in a new snapshot before saying a step worked. Use browser_screenshot only when you must see something visually.',
-        'OTHER MAC APPS: use screenshot, actions and zoom. Start with a screenshot.',
+        'OTHER MAC APPS (TextEdit, Finder, ...): open or switch to the app with open_app, then read it with app_snapshot and act by ref ' +
+            '(app_press a12 for buttons/menus/checkboxes, app_type a5 "text" for fields). Refs go stale when the window changes: ' +
+            'take a new app_snapshot after every action. Keyboard shortcuts (e.g. cmd+s) go through the actions tool.',
+        'Use screenshot, actions and zoom (pixels) only when app_snapshot does not show what you need ' +
+            '(unnamed icons, canvas, pictures) or to check something visually. The "at x,y" of a ref is its centre in screenshot pixels.',
         'Use the actions tool for mouse and keyboard. It returns a screenshot after the actions, so you do not need a separate screenshot after it.',
         'Put several actions in one call when you do not need to look in between (e.g. click a field, type, press return).',
         'Click a text field before typing into it.',
@@ -58,8 +62,11 @@ const agent = new ToolLoopAgent({
         // log the action
         await log({ event: 'compaction', step: stepNumber, imagesBefore: before, imagesAfter: Math.min(before, KEEP_IMAGES) });
 
-        // compact the images, and keep only the newest page snapshot (older ones describe old pages)
-        return { messages: keepNewestToolResults(keepNewestImages(messages, KEEP_IMAGES), 'browser_snapshot', 1) };
+        // compact the images, and keep only the newest page / app snapshot (older ones describe old screens)
+        let compacted = keepNewestImages(messages, KEEP_IMAGES);
+        compacted = keepNewestToolResults(compacted, 'browser_snapshot', 1);
+        compacted = keepNewestToolResults(compacted, 'app_snapshot', 1);
+        return { messages: compacted };
     },
     // One line per model call in logs/agent.jsonl, so each run can be measured afterwards.
     onStepEnd: async (step) => {

@@ -16,6 +16,11 @@ export const IMAGE_WIDTH = Math.round((IMAGE_HEIGHT * screen.pointsWidth) / scre
 const scaleX = screen.pointsWidth / IMAGE_WIDTH;   // ≈ 1.1717
 const scaleY = screen.pointsHeight / IMAGE_HEIGHT; // ≈ 1.1719
 
+/** Screen point (e.g. an Accessibility element's position) → screenshot pixel (what the model sees). */
+export function mapPointToScreenshot(x: number, y: number): { x: number; y: number } {
+  return { x: Math.round(x / scaleX), y: Math.round(y / scaleY) };
+}
+
 /** Screenshot pixel (what the model says) → screen point (where we click). */
 export function mapScreenToPoint(x: number, y: number): { x: number; y: number } {
   return { x: Math.round(x * scaleX), y: Math.round(y * scaleY) };

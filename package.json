@@ -14,5 +14,8 @@
     "@openrouter/ai-sdk-provider": "^3.1.0",
     "ai": "^7.0.118",
     "zod": "^4.6.5"
+  },
+  "scripts": {
+    "build:ax": "mkdir -p bin && swiftc -O native/ax-helper.swift -o bin/ax-helper"
   }
 }

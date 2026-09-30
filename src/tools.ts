@@ -5,7 +5,8 @@ import {
   ALLOWED_APPS, MODIFIERS, NAMED_KEYS, ensureOnScreen, capture, click, getScreenInfo,
   log, moveMouse, openApp, pressKey, typeText, shrinkToWidth, SHOT_DIR,
 } from './computer';
-import { browser, browserSnapshot, safeArg, toRef } from './browser';
+import { browser, browserSnapshot, safeArg, splitIntoParts, toRef } from './browser';
+import { appFocus, appPress, appSnapshot } from './native';
 import { IMAGE_HEIGHT, IMAGE_WIDTH, mapScreenToPoint } from './mapper';
 
 /**
@@ -310,7 +311,66 @@ const browser_screenshot = tool({
   toModelOutput: ({ output }) => shotToModel(output),
 });
 
+// ---------- native Mac apps (Accessibility tree via bin/ax-helper): act on elements by ref ----------
+
+// Chrome has its own browser_* tools.
+const NATIVE_APPS = ALLOWED_APPS.filter((app) => app !== 'Google Chrome') as [string, ...string[]];
+
+/** Runs one native-app step for a tool, logs it, and returns its text. */
+async function nativeTool(tool: string, input: Record<string, unknown>, run: () => Promise<string>): Promise<string> {
+  try {
+    const output = await run();
+    await log({ tool, ...input, outputChars: output.length });
+    return output;
+  } catch (err) {
+    await log({ tool, ...input, error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
+}
+
+const app_snapshot = tool({
+  description:
+    'Read a native Mac app\'s open windows as a text tree of elements (buttons, fields, menus, text). ' +
+    'Elements you can act on have refs like [ref=a12] and "at x,y" = their centre in screenshot pixels. ' +
+    'Refs are only valid until the window changes; take a new app_snapshot after every change. Long trees come in parts.',
+  inputSchema: z.object({
+    app: z.enum(NATIVE_APPS),
+    part: z.number().int().min(1).optional().describe('Which part of a long tree, default 1'),
+  }),
+  execute: ({ app, part }) => nativeTool('app_snapshot', { app, part }, async () => {
+    const parts = splitIntoParts(await appSnapshot(app), 20_000);
+    if (parts.length <= 1) return parts[0] ?? '';
+    const index = Math.min(Math.max(part ?? 1, 1), parts.length) - 1;
+    const more = index + 1 < parts.length ? ` For the next part, call app_snapshot with part ${index + 2}.` : '';
+    return `[part ${index + 1} of ${parts.length}.${more}]\n${parts[index]}`;
+  }),
+});
+
+const app_press = tool({
+  description: 'Press a button, menu item, checkbox, tab or link in a native app, by ref from the latest app_snapshot. No mouse needed.',
+  inputSchema: z.object({ ref: z.string().describe('Ref like "a12"') }),
+  execute: ({ ref }) => nativeTool('app_press', { ref }, async () => {
+    const result = await appPress(ref);
+    return `pressed ${result.role ?? ''} "${result.name ?? ''}". Take a new app_snapshot to see the result.`;
+  }),
+});
+
+const app_type = tool({
+  description:
+    'Type text into a field of a native app, by ref: brings the app to the front, focuses the field, then types. ' +
+    'Typing adds at the cursor; to replace existing text, press cmd+a first with the actions tool.',
+  inputSchema: z.object({ ref: z.string().describe('Ref like "a12"'), text: z.string().min(1) }),
+  execute: ({ ref, text }) => nativeTool('app_type', { ref, text }, async () => {
+    const result = await appFocus(ref);
+    await Bun.sleep(300); // let the app come to the front before typing
+    await typeText(text);
+    return `typed into ${result.role ?? ''} "${result.name ?? ''}". Take a new app_snapshot to check.`;
+  }),
+});
+
 export const tools: ToolSet = {
+  // native Mac apps: structure first (Accessibility tree), pixels as the fallback
+  app_snapshot, app_press, app_type,
   // whole-screen tools (pixels) for native Mac apps
   screenshot, actions, zoom, open_app, view_screenshot,
   // Chrome tools (page structure + refs)
