@@ -3,6 +3,7 @@
 // so text written by the model can't be run as a shell command.
 import { mkdir, appendFile } from 'node:fs/promises';
 import path from 'node:path';
+import { assertInputAllowed, assertSafeKey, assertSafeText } from './guard';
 
 // logs/ lives in the project root (this file is in src/).
 const LOG_DIR = path.join(import.meta.dir, '..', 'logs');
@@ -95,6 +96,7 @@ const CLICK_COMMAND: Record<ClickKind, string> = { left: 'c', double: 'dc', righ
 
 /** Move first, wait for the move to land, then click (the video's "move, wait, click" rule). */
 export async function click(kind: ClickKind, x: number, y: number): Promise<void> {
+  await assertInputAllowed('click');
   await cliclick([`m:${x},${y}`, 'w:100', `${CLICK_COMMAND[kind]}:${x},${y}`]);
 }
 
@@ -103,6 +105,8 @@ export async function moveMouse(x: number, y: number): Promise<void> {
 }
 
 export async function typeText(text: string): Promise<void> {
+  assertSafeText(text);
+  await assertInputAllowed('typing');
   // cliclick's t: drops line breaks, so type each line and press return in between.
   const lines = text.split(/\r?\n/);
   for (const [i, line] of lines.entries()) {
@@ -134,6 +138,8 @@ export const MODIFIERS = Object.keys(MODIFIER_NAMES) as (keyof typeof MODIFIER_N
 
 /** A named key (e.g. "return") or a single character (e.g. "l"), optionally with modifiers held down. */
 export async function pressKey(key: string, modifiers: (keyof typeof MODIFIER_NAMES)[] = []): Promise<void> {
+  assertSafeKey(key, modifiers);
+  await assertInputAllowed('key press');
   if (key in KEY_CODES) {
     // e.g. tell application "System Events" to key code 36 using {command down}
     // The script is built only from the fixed tables above, never from free text.
@@ -198,8 +204,12 @@ export async function capture(
 
 // ---------- apps ----------
 
-/** Apps the agent may launch. Anything else has to be opened through the GUI (e.g. Spotlight). */
-export const ALLOWED_APPS = ['Google Chrome', 'TextEdit', 'Finder', 'Calculator', 'WhatsApp', "Docker Desktop"] as const;
+/**
+ * Apps the agent may launch and read/press through the Accessibility API. Never add terminals, code editors
+ * (Cursor, VS Code: built-in terminal and AI agent) or script runners: app_press does not go through the
+ * keyboard guard in guard.ts, so pressing "Run" in such an app would run commands.
+ */
+export const ALLOWED_APPS = ['Google Chrome', 'TextEdit', 'Finder', 'Calculator', 'WhatsApp', 'Docker Desktop'] as const;
 
 /** Opens (or brings to front) an app. Websites go through the browser_* tools, not here. */
 export async function openApp(app: string): Promise<void> {

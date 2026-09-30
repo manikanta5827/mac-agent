@@ -259,9 +259,10 @@ if command == "check" {
     exit(0)
 }
 
-// frontmost: which app is in front right now (needs no Accessibility permission).
+// frontmost: which app is in front right now, by name and bundle id (needs no Accessibility permission).
 if command == "frontmost" {
-    output(Result(ok: true, role: nil, name: NSWorkspace.shared.frontmostApplication?.localizedName, error: nil))
+    let front = NSWorkspace.shared.frontmostApplication
+    output(["name": front?.localizedName ?? "", "bundleId": front?.bundleIdentifier ?? ""])
     exit(0)
 }
 
