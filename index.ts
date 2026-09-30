@@ -32,7 +32,8 @@ const agent = new ToolLoopAgent({
         'OTHER MAC APPS (TextEdit, Finder, ...): open or switch to the app with open_app, then read it with app_snapshot and act by ref ' +
             '(app_press a12 for buttons/menus/checkboxes, app_type a5 "text" for fields). Refs go stale when the window changes: ' +
             'take a new app_snapshot after every action. Keyboard shortcuts (e.g. cmd+s) go through the actions tool.',
-        'Use screenshot, actions and zoom (pixels) only when app_snapshot does not show what you need ' +
+        'To SEE a native app, use app_screenshot: a screenshot with numbered boxes, where box [N] is ref aN. ' +
+            'Use screenshot, actions and zoom (plain pixels) only when neither app_snapshot nor app_screenshot shows what you need ' +
             '(unnamed icons, canvas, pictures) or to check something visually. The "at x,y" of a ref is its centre in screenshot pixels.',
         'Use the actions tool for mouse and keyboard. It returns a screenshot after the actions, so you do not need a separate screenshot after it.',
         'Put several actions in one call when you do not need to look in between (e.g. click a field, type, press return).',

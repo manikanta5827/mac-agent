@@ -17,6 +17,7 @@
 
 import AppKit
 import ApplicationServices
+import UniformTypeIdentifiers
 
 let maxNodes = 1500
 let maxDepth = 40
@@ -190,13 +191,87 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
+// ---------- drawing numbered boxes on a screenshot ----------
+
+/// One box to draw, in the image's own pixels (top-left origin).
+struct Box: Codable {
+    let label: String
+    let x: Double
+    let y: Double
+    let w: Double
+    let h: Double
+}
+
+let boxColors: [NSColor] = [.systemRed, .systemBlue, .systemGreen, .systemOrange, .systemPurple, .systemPink]
+
+/// Reads `input`, draws a thin box and a small number label for every box, writes a JPEG to `outputPath`.
+func annotate(input: String, outputPath: String, boxes: [Box]) {
+    guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: input) as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { fail("Cannot read image \(input)") }
+    let width = image.width, height = image.height
+    guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("Cannot create drawing context") }
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+    // Flip so (0,0) is the top-left corner, like screenshot pixels.
+    ctx.translateBy(x: 0, y: CGFloat(height))
+    ctx.scaleBy(x: 1, y: -1)
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+
+    let font = NSFont.boldSystemFont(ofSize: 11)
+    for (i, box) in boxes.enumerated() {
+        let color = boxColors[i % boxColors.count]
+        let rect = CGRect(x: box.x, y: box.y, width: box.w, height: box.h)
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setLineWidth(2)
+        ctx.stroke(rect)
+
+        // Label: white number on a filled tag, just above the box's top-left corner (inside if no room above).
+        let text = box.label as NSString
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let size = text.size(withAttributes: attributes)
+        let tag = CGSize(width: size.width + 4, height: size.height)
+        let tagY = box.y - tag.height >= 0 ? box.y - tag.height : box.y
+        let tagRect = CGRect(x: box.x, y: tagY, width: tag.width, height: tag.height)
+        ctx.setFillColor(color.cgColor)
+        ctx.fill(tagRect)
+        text.draw(at: CGPoint(x: tagRect.minX + 2, y: tagRect.minY), withAttributes: attributes)
+    }
+    NSGraphicsContext.current = nil
+
+    guard let result = ctx.makeImage(),
+          let destination = CGImageDestinationCreateWithURL(URL(fileURLWithPath: outputPath) as CFURL,
+                                                            UTType.jpeg.identifier as CFString, 1, nil) else {
+        fail("Cannot write image \(outputPath)")
+    }
+    CGImageDestinationAddImage(destination, result, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+    guard CGImageDestinationFinalize(destination) else { fail("Cannot write image \(outputPath)") }
+}
+
 // ---------- main ----------
 
 let args = Array(CommandLine.arguments.dropFirst())
-guard let command = args.first else { fail("usage: ax-helper check|snapshot|press|focus|set ...") }
+guard let command = args.first else { fail("usage: ax-helper check|snapshot|press|focus|set|activate|annotate ...") }
 
 if command == "check" {
     output(["trusted": AXIsProcessTrusted()])
+    exit(0)
+}
+
+// frontmost: which app is in front right now (needs no Accessibility permission).
+if command == "frontmost" {
+    output(Result(ok: true, role: nil, name: NSWorkspace.shared.frontmostApplication?.localizedName, error: nil))
+    exit(0)
+}
+
+// annotate <input.jpg> <output.jpg>, boxes as JSON on stdin. Pure drawing: needs no Accessibility permission.
+if command == "annotate" {
+    guard args.count >= 3 else { fail("usage: ax-helper annotate <input.jpg> <output.jpg>  (boxes JSON on stdin)") }
+    let data = FileHandle.standardInput.readDataToEndOfFile()
+    guard let boxes = try? JSONDecoder().decode([Box].self, from: data) else { fail("Boxes on stdin must be JSON [{label,x,y,w,h}]") }
+    annotate(input: args[1], outputPath: args[2], boxes: boxes)
+    output(Result(ok: true, role: nil, name: nil, error: nil))
     exit(0)
 }
 guard AXIsProcessTrusted() else {
@@ -215,6 +290,11 @@ case "snapshot":
         Thread.sleep(forTimeInterval: 0.5) // give the app a moment to build the tree the first time
     }
     output(snapshot(app))
+
+case "activate":
+    // Bring the app to the front (before a screenshot, so its boxes are not drawn over other windows).
+    app.activate()
+    output(Result(ok: true, role: nil, name: app.localizedName, error: nil))
 
 case "debug":
     // What does the app expose at the top level? Helps when a snapshot comes back empty.

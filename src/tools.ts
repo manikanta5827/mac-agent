@@ -6,7 +6,7 @@ import {
   log, moveMouse, openApp, pressKey, typeText, shrinkToWidth, SHOT_DIR,
 } from './computer';
 import { browser, browserSnapshot, safeArg, splitIntoParts, toRef } from './browser';
-import { appFocus, appPress, appSnapshot } from './native';
+import { appFocus, appPress, appScreenshot, appSnapshot } from './native';
 import { IMAGE_HEIGHT, IMAGE_WIDTH, mapScreenToPoint } from './mapper';
 
 /**
@@ -342,6 +342,20 @@ const app_snapshot = tool({
   }),
 });
 
+const app_screenshot = tool({
+  description:
+    'Look at a native Mac app: brings it to the front and returns a screenshot with a numbered box around every element ' +
+    'you can act on, plus a list of each box\'s centre and size. Box [N] = ref aN (use app_press aN / app_type aN). ' +
+    'Use it when app_snapshot is not enough: icons without names, layout, or checking a result visually.',
+  inputSchema: z.object({ app: z.enum(NATIVE_APPS) }),
+  execute: async ({ app }) => {
+    const shot = await appScreenshot(app);
+    await log({ tool: 'app_screenshot', app, path: shot.path, boxes: shot.note.split('\n').length - 1 });
+    return shot;
+  },
+  toModelOutput: ({ output }) => shotToModel(output),
+});
+
 const app_press = tool({
   description: 'Press a button, menu item, checkbox, tab or link in a native app, by ref from the latest app_snapshot. No mouse needed.',
   inputSchema: z.object({ ref: z.string().describe('Ref like "a12"') }),
@@ -366,7 +380,7 @@ const app_type = tool({
 
 export const tools: ToolSet = {
   // native Mac apps: structure first (Accessibility tree), pixels as the fallback
-  app_snapshot, app_press, app_type,
+  app_snapshot, app_screenshot, app_press, app_type,
   // whole-screen tools (pixels) for native Mac apps
   screenshot, actions, zoom, open_app, view_screenshot,
   // Chrome tools (page structure + refs)
