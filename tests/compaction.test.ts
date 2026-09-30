@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test';
 import type { ModelMessage } from 'ai';
-import { countImages, keepNewestImages, REMOVED_NOTE } from '../src/compaction';
+import { countImages, keepNewestImages, keepNewestToolResults, OLD_RESULT_NOTE, REMOVED_NOTE } from '../src/compaction';
 
 /** Builds a conversation with `n` screenshot tool results. */
 function conversation(n: number): ModelMessage[] {
@@ -54,4 +54,16 @@ test('keepNewestImages keeps only the newest images, and earlier notes are not c
   const twice = keepNewestImages([...once, ...more], 3);
   expect(countImages(twice)).toBe(3);
   expect(imageData(twice).slice(-3)).toEqual(['img14', 'img15', 'img16']);
+});
+
+test('keepNewestToolResults hides old snapshots and leaves other tools alone', () => {
+  const messages: ModelMessage[] = [{ role: 'user', content: 'task' }];
+  for (const [i, toolName] of ['browser_snapshot', 'browser_click', 'browser_snapshot', 'browser_snapshot'].entries()) {
+    messages.push({ role: 'assistant', content: [{ type: 'tool-call', toolCallId: `c${i}`, toolName, input: {} }] });
+    messages.push({ role: 'tool', content: [{ type: 'tool-result', toolCallId: `c${i}`, toolName, output: { type: 'text', value: `out${i}` } }] });
+  }
+  const result = keepNewestToolResults(messages, 'browser_snapshot', 1);
+  const values = result.flatMap((m) => (m.role === 'tool' ? m.content.map((p) => (p.type === 'tool-result' && p.output.type === 'text' ? p.output.value : '')) : []));
+  expect(values).toEqual([OLD_RESULT_NOTE, 'out1', OLD_RESULT_NOTE, 'out3']);
+  expect(messages[2]).toMatchObject({ content: [{ output: { value: 'out0' } }] }); // original not mutated
 });

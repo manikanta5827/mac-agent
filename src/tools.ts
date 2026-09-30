@@ -3,9 +3,10 @@ import { z } from 'zod';
 import { tool, type ToolSet } from 'ai';
 import {
   ALLOWED_APPS, MODIFIERS, NAMED_KEYS, ensureOnScreen, capture, click, getScreenInfo,
-  log, moveMouse, openApp, pressKey, typeText, SHOT_DIR,
+  log, moveMouse, openApp, pressKey, typeText, shrinkToWidth, SHOT_DIR,
 } from './computer';
-import { mapScreenToPoint } from './mapper';
+import { browser, browserSnapshot, safeArg, toRef } from './browser';
+import { IMAGE_HEIGHT, IMAGE_WIDTH, mapScreenToPoint } from './mapper';
 
 /**
  * Sends the image file to the model as the tool result, plus a short text header.
@@ -25,7 +26,7 @@ async function shotToModel(output: { path: string; note: string }) {
 
 async function takeScreenshot(settleMs: number) {
   await Bun.sleep(settleMs); // let the app finish redrawing after the previous action
-  const shot = await capture();
+  const shot = await capture(undefined, { width: IMAGE_WIDTH, height: IMAGE_HEIGHT });
   await log({ tool: 'screenshot', path: shot.path, width: shot.width, height: shot.height });
   return shot;
 }
@@ -35,7 +36,7 @@ const screenshot = tool({
   inputSchema: z.object({}),
   execute: async () => {
     const shot = await takeScreenshot(500);
-    return { ...shot, note: `Screenshot of the screen, ${shot.width}x${shot.height} pixels.` };
+    return { ...shot, note: `Screenshot of the screen, ${shot.width}x${shot.height} pixels. Use these image pixels for all x/y coordinates.` };
   },
   toModelOutput: ({ output }) => shotToModel(output),
 });
@@ -53,8 +54,8 @@ const actions = tool({
   inputSchema: z.object({
     actions: z.array(z.object({
       action: z.enum(['left_click', 'double_click', 'right_click', 'move_mouse', 'type_text', 'press_key', 'wait']),
-      x: z.number().optional().describe('For clicks and move_mouse: X on the screen'),
-      y: z.number().optional().describe('For clicks and move_mouse: Y on the screen'),
+      x: z.number().optional().describe('For clicks and move_mouse: X in screenshot pixels'),
+      y: z.number().optional().describe('For clicks and move_mouse: Y in screenshot pixels'),
       text: z.string().optional().describe('For type_text. Click the field first.'),
       key: z.string().optional().describe(
         `For press_key: a single character or one of ${NAMED_KEYS.join(', ')}. ` +
@@ -139,8 +140,8 @@ const zoom = tool({
     'Look closer at a rectangle of the screen, returned at full detail. Use it for small targets. ' +
     'Coordinates for clicks are still full-screen coordinates, not coordinates inside the zoomed image.',
   inputSchema: z.object({
-    x: z.number().describe('X of the rectangle\'s TOP-LEFT corner on the screen'),
-    y: z.number().describe('Y of the rectangle\'s TOP-LEFT corner on the screen'),
+    x: z.number().describe('X of the rectangle\'s TOP-LEFT corner, in screenshot pixels'),
+    y: z.number().describe('Y of the rectangle\'s TOP-LEFT corner, in screenshot pixels'),
     width: z.number().positive().describe('Rectangle width, extending to the right of x'),
     height: z.number().positive().describe('Rectangle height, extending down from y'),
   }),
@@ -155,7 +156,11 @@ const zoom = tool({
     await ensureOnScreen(bottomRight.x - 1, bottomRight.y - 1);
     const shot = await capture(region);
     await log({ tool: 'zoom', raw: { x, y, width, height }, region, path: shot.path, width: shot.width, height: shot.height });
-    return { ...shot, note: `Zoomed view of region x=${x} y=${y} w=${width} h=${height}, image is ${shot.width}x${shot.height} pixels.` };
+    return { ...shot, note:
+        `Zoomed view of screenshot region x=${x} y=${y} w=${width} h=${height}, shown at ${shot.width}x${shot.height} pixels. ` +
+        `To click something at zoom pixel (px, py), use screenshot x = ${x} + px × ${(width / shot.width).toFixed(4)}, ` +
+        `y = ${y} + py × ${(height / shot.height).toFixed(4)}.`,
+    };
   },
   toModelOutput: ({ output }) => shotToModel(output),
 });
@@ -203,7 +208,115 @@ const view_screenshot = tool({
   toModelOutput: ({ output }) => shotToModel(output),
 });
 
-export const tools: ToolSet = { screenshot, actions, zoom, open_app, view_screenshot };
+// ---------- Chrome (agent-browser): act on elements by ref, no pixels ----------
+
+/** Runs one agent-browser command for a tool (or `run` for custom steps), logs it, and returns its output. */
+async function browserTool(tool: string, args: string[], run = () => browser(args)): Promise<string> {
+  try {
+    const output = await run();
+    await log({ tool, args, outputChars: output.length });
+    return output || 'ok';
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await log({ tool, args, error: message });
+    throw err;
+  }
+}
+
+const refInput = z.string().describe('Element ref from the latest browser_snapshot, e.g. "@e12"');
+
+const browser_snapshot = tool({
+  description:
+    'Read the current Chrome tab as a text tree of elements (with page text). Interactive elements have refs like [ref=e12]. ' +
+    'Refs are only valid until the page changes; take a new snapshot after every page change. ' +
+    'Long pages come in parts; the first line says "page part 1 of N".',
+  inputSchema: z.object({
+    part: z.number().int().min(1).optional().describe('Which part of a long page, default 1 (the top)'),
+  }),
+  execute: ({ part }) => browserTool('browser_snapshot', ['snapshot', String(part ?? 1)], () => browserSnapshot(part)),
+});
+
+const browser_wait = tool({
+  description:
+    'Wait after an action that changes the page. Give text you expect to appear, or part of the URL you expect; ' +
+    'with neither, waits until the page has finished loading. Better than guessing a time.',
+  inputSchema: z.object({
+    text: z.string().min(1).optional().describe('Text that should appear on the page'),
+    url_contains: z.string().min(1).optional().describe('Part of the URL to wait for, e.g. "/feed"'),
+  }),
+  execute: ({ text, url_contains }) => {
+    const args = text ? ['wait', '--text', safeArg(text)]
+      : url_contains ? ['wait', '--url', `**${safeArg(url_contains)}**`]
+      : ['wait', '--load', 'networkidle'];
+    return browserTool('browser_wait', args);
+  },
+});
+
+const browser_open = tool({
+  description: 'Open an https URL in the current Chrome tab.',
+  inputSchema: z.object({ url: z.string().describe('https:// URL') }),
+  execute: async ({ url }) => {
+    if (!/^https:\/\//.test(url)) throw new Error('Only https:// URLs are allowed');
+    return browserTool('browser_open', ['open', url]);
+  },
+});
+
+const browser_click = tool({
+  description: 'Click an element in Chrome by its ref.',
+  inputSchema: z.object({ ref: refInput }),
+  execute: ({ ref }) => browserTool('browser_click', ['click', toRef(ref)]),
+});
+
+const browser_fill = tool({
+  description: 'Clear a text field in Chrome and type text into it, by its ref.',
+  inputSchema: z.object({ ref: refInput, text: z.string().min(1) }),
+  execute: ({ ref, text }) => browserTool('browser_fill', ['fill', toRef(ref), safeArg(text)]),
+});
+
+const browser_press = tool({
+  description: 'Press a key in Chrome, e.g. "Enter", "Tab", "Escape", "Control+a".',
+  inputSchema: z.object({ key: z.string().min(1) }),
+  execute: ({ key }) => browserTool('browser_press', ['press', safeArg(key)]),
+});
+
+const browser_scroll = tool({
+  description: 'Scroll the Chrome page up or down.',
+  inputSchema: z.object({
+    direction: z.enum(['up', 'down']),
+    pixels: z.number().int().min(100).max(3000).optional().describe('How far, default 800'),
+  }),
+  execute: ({ direction, pixels }) => browserTool('browser_scroll', ['scroll', direction, String(pixels ?? 800)]),
+});
+
+const browser_back = tool({
+  description: 'Go back one page in Chrome.',
+  inputSchema: z.object({}),
+  execute: () => browserTool('browser_back', ['back']),
+});
+
+const browser_screenshot = tool({
+  description:
+    'Look at the Chrome tab. Every interactive element gets a red box with a number [N], which is ref @eN. ' +
+    'Only use it when you need to see something visually (icons without names, layout, checking a result); prefer browser_snapshot.',
+  inputSchema: z.object({}),
+  execute: async () => {
+    const file = path.join(SHOT_DIR, `${Date.now()}-browser.jpg`);
+    const legend = await browserTool('browser_screenshot', [
+      '--screenshot-format', 'jpeg', '--screenshot-quality', '80', 'screenshot', '--annotate', file,
+    ]);
+    const size = await shrinkToWidth(file, IMAGE_WIDTH); // fewer image tokens; clicks use refs, not pixels
+    return { path: file, ...size, note: `Annotated Chrome screenshot. Label [N] = ref @eN.\n${legend}` };
+  },
+  toModelOutput: ({ output }) => shotToModel(output),
+});
+
+export const tools: ToolSet = {
+  // whole-screen tools (pixels) for native Mac apps
+  screenshot, actions, zoom, open_app, view_screenshot,
+  // Chrome tools (page structure + refs)
+  browser_snapshot, browser_open, browser_click, browser_fill, browser_press, browser_scroll, browser_back, browser_wait,
+  browser_screenshot,
+};
 
 // Record the screen geometry once per run, so each log says which sizes were in play.
 await log({ event: 'start', screen: await getScreenInfo() });

@@ -38,3 +38,25 @@ export function keepNewestImages(messages: ModelMessage[], keep: number): ModelM
   for (const { list, index } of oldImages) list[index] = { type: 'text', text: REMOVED_NOTE };
   return copy;
 }
+
+export const OLD_RESULT_NOTE = '[older result removed to save tokens. Take a new one if you need it]';
+
+/**
+ * Returns a copy of `messages` where the text of every `toolName` result except the newest `keep`
+ * is replaced by a short note. Used for browser_snapshot: each page snapshot is thousands of tokens,
+ * and only the latest one describes the current page.
+ */
+export function keepNewestToolResults(messages: ModelMessage[], toolName: string, keep: number): ModelMessage[] {
+  const copy = structuredClone(messages);
+  const results = [];
+  for (const message of copy) {
+    if (message.role !== 'tool') continue;
+    for (const part of message.content) {
+      if (part.type === 'tool-result' && part.toolName === toolName && part.output.type === 'text') results.push(part);
+    }
+  }
+  for (const part of results.slice(0, Math.max(results.length - keep, 0))) {
+    part.output = { type: 'text', value: OLD_RESULT_NOTE };
+  }
+  return copy;
+}

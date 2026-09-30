@@ -4,15 +4,24 @@
 import { mkdir, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const LOG_DIR = path.join(import.meta.dir, 'logs');
+// logs/ lives in the project root (this file is in src/).
+const LOG_DIR = path.join(import.meta.dir, '..', 'logs');
 export const SHOT_DIR = path.join(LOG_DIR, 'shots');
 const AGENT_LOG = path.join(LOG_DIR, 'agent.jsonl');
+// One conversation file per run, e.g. logs/conversations/2026-09-29T09-35-26.jsonl
+const CONVERSATION_LOG = path.join(LOG_DIR, 'conversations', `${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.jsonl`);
 
 await mkdir(SHOT_DIR, { recursive: true });
+await mkdir(path.dirname(CONVERSATION_LOG), { recursive: true });
 
 /** One JSON line per action in logs/agent.jsonl. Watch it with: tail -f logs/agent.jsonl */
 export async function log(entry: Record<string, unknown>): Promise<void> {
   await appendFile(AGENT_LOG, JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n');
+}
+
+/** One JSON line per message in this run's conversation file (what the user said, what the model thought and did). */
+export async function logConversation(entry: Record<string, unknown>): Promise<void> {
+  await appendFile(CONVERSATION_LOG, JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n');
 }
 
 async function run(cmd: string[]): Promise<{ stdout: string; stderr: string }> {
@@ -94,14 +103,19 @@ export async function moveMouse(x: number, y: number): Promise<void> {
 }
 
 export async function typeText(text: string): Promise<void> {
-  await cliclick([`t:${text}`]);
+  // cliclick's t: drops line breaks, so type each line and press return in between.
+  const lines = text.split(/\r?\n/);
+  for (const [i, line] of lines.entries()) {
+    if (i > 0) await pressKey('return');
+    if (line) await cliclick([`t:${line}`]);
+  }
 }
 
 // macOS key codes for named keys. These are pressed through System Events (osascript),
 // because Chrome ignores cliclick's `kp:` presses (tested: kp:return typed nothing in the
 // address bar, System Events `key code 36` worked).
 const KEY_CODES = {
-  'return': 36, 'enter': 76, 'tab': 48, 'space': 49, 'esc': 53, 'delete': 51, 'fwd-delete': 117,
+  'return': 36, 'enter': 76, 'tab': 48, 'space': 49, 'esc': 53, 'escape': 53, 'delete': 51, 'fwd-delete': 117,
   'arrow-up': 126, 'arrow-down': 125, 'arrow-left': 123, 'arrow-right': 124,
   'home': 115, 'end': 119, 'page-up': 116, 'page-down': 121,
   'f1': 122, 'f2': 120, 'f3': 99, 'f4': 118, 'f5': 96, 'f6': 97,
@@ -141,6 +155,13 @@ export type Shot = { path: string; width: number; height: number };
 
 let shotCounter = 0;
 
+/** Shrinks an image in place so it is at most `maxWidth` wide (keeps the aspect ratio). */
+export async function shrinkToWidth(file: string, maxWidth: number): Promise<{ width: number; height: number }> {
+  const size = await imageSize(file);
+  if (size.width > maxWidth) await run(['sips', '--resampleWidth', String(maxWidth), file]);
+  return imageSize(file);
+}
+
 async function imageSize(file: string): Promise<{ width: number; height: number }> {
   const { stdout } = await run(['sips', '-g', 'pixelWidth', '-g', 'pixelHeight', file]);
   const width = Number(stdout.match(/pixelWidth:\s*(\d+)/)?.[1]);
@@ -150,10 +171,14 @@ async function imageSize(file: string): Promise<{ width: number; height: number 
 
 /**
  * Full-screen capture, or only a region when `region` (in points) is given.
+ * `resizeTo` shrinks the image to exactly that size (the size the model works in).
  * JPEG keeps each image ~10x smaller than PNG, which matters because every
  * screenshot is re-sent to the model on every later step.
  */
-export async function capture(region?: { x: number; y: number; width: number; height: number }): Promise<Shot> {
+export async function capture(
+  region?: { x: number; y: number; width: number; height: number },
+  resizeTo?: { width: number; height: number },
+): Promise<Shot> {
   shotCounter += 1;
   const name = `${Date.now()}-${shotCounter}${region ? '-zoom' : ''}.jpg`;
   const file = path.join(SHOT_DIR, name);
@@ -166,13 +191,15 @@ export async function capture(region?: { x: number; y: number; width: number; he
   if (!(await Bun.file(file).exists())) {
     throw new Error('Screenshot was not created. Check Screen Recording permission for the app running this agent.');
   }
+  // sips -z takes height first, then width.
+  if (resizeTo) await run(['sips', '-z', String(resizeTo.height), String(resizeTo.width), file]);
   return { path: file, ...(await imageSize(file)) };
 }
 
 // ---------- apps ----------
 
 /** Apps the agent may launch. Anything else has to be opened through the GUI (e.g. Spotlight). */
-export const ALLOWED_APPS = ['Google Chrome', 'TextEdit', 'Finder', 'Calculator'] as const;
+export const ALLOWED_APPS = ['Google Chrome', 'TextEdit', 'Finder', 'Calculator', 'WhatsApp'] as const;
 
 export async function openApp(app: string, url?: string): Promise<void> {
   if (!(ALLOWED_APPS as readonly string[]).includes(app)) {
