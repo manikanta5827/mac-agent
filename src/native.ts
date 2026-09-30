@@ -54,6 +54,14 @@ export function isActionable(node: AxNode): boolean {
   return node.enabled !== false && (INPUT_ROLES.has(node.role) || node.actions.some((a) => ACTION_NAMES.has(a)));
 }
 
+// The traffic-light window buttons have no title; name them so the model never presses a mystery button.
+const SUBROLE_NAMES: Record<string, string> = {
+  AXCloseButton: 'close window',
+  AXMinimizeButton: 'minimize window',
+  AXZoomButton: 'zoom window',
+  AXFullScreenButton: 'full screen',
+};
+
 /** "AXTextArea" → "textArea" */
 function shortRole(role: string): string {
   const bare = role.replace(/^AX/, '');
@@ -69,15 +77,16 @@ export function formatSnapshot(snapshot: AxSnapshot): { text: string; refs: Map<
   const lines: string[] = [];
   for (const node of snapshot.nodes) {
     const actionable = isActionable(node);
-    if (!actionable && !node.name && !node.value) continue;
+    const name = (node.subrole && SUBROLE_NAMES[node.subrole]) || node.name;
+    if (!actionable && !name && !node.value) continue;
     let line = `${'  '.repeat(node.depth)}- ${shortRole(node.role)}`;
-    if (node.name) line += ` "${node.name}"`;
+    line += name ? ` "${name}"` : actionable && !node.value ? ' (no name)' : '';
     if (node.value && node.value !== node.name) line += ` value="${node.value}"`;
     if (node.focused) line += ' (focused)';
     if (node.enabled === false) line += ' (disabled)';
     if (actionable) {
       const ref = `a${refs.size + 1}`;
-      refs.set(ref, { app: snapshot.app, path: node.path, role: node.role, name: node.name });
+      refs.set(ref, { app: snapshot.app, path: node.path, role: node.role, name });
       line += ` [ref=${ref}]`;
       // Centre in screenshot pixels, so the model can relate it to a screenshot (and click there as a fallback).
       if (node.x !== undefined && node.y !== undefined && node.w && node.h) {
@@ -93,7 +102,16 @@ export function formatSnapshot(snapshot: AxSnapshot): { text: string; refs: Map<
 
 /** Reads the app's windows and returns the text tree. Replaces the previous refs. */
 export async function appSnapshot(app: string): Promise<string> {
-  const snapshot = (await runHelper(['snapshot', app])) as AxSnapshot;
+  // An app opened a moment ago (open_app) may still be starting: wait up to ~10 s for it.
+  let snapshot: AxSnapshot | undefined;
+  for (let attempt = 1; !snapshot; attempt++) {
+    try {
+      snapshot = (await runHelper(['snapshot', app])) as AxSnapshot;
+    } catch (err) {
+      if (attempt >= 10 || !String(err).includes('App is not running')) throw err;
+      await Bun.sleep(1000);
+    }
+  }
   if (snapshot.nodes.length === 0) return `app "${app}" has no open windows (or does not expose them).`;
   const { text, refs } = formatSnapshot(snapshot);
   latestRefs = refs;

@@ -168,17 +168,13 @@ const zoom = tool({
 
 const open_app = tool({
   description:
-    `Open (or bring to front) an app, optionally at an https URL. Allowed apps: ${ALLOWED_APPS.join(', ')}. ` +
-    'Opening a URL in a browser creates a NEW TAB every time. To go to another page in the current tab, ' +
-    'press cmd+l, type the URL, and press return instead.',
-  inputSchema: z.object({
-    app: z.enum(ALLOWED_APPS),
-    url: z.string().optional().describe('https:// URL to open in the app'),
-  }),
-  execute: async ({ app, url }) => {
-    await openApp(app, url);
-    await log({ tool: 'open_app', app, url });
-    return `ok: opened ${app}${url ? ` at ${url}` : ''}`;
+    `Open (or bring to front) a Mac app. Allowed apps: ${ALLOWED_APPS.join(', ')}. ` +
+    'For websites use browser_open instead: the browser_* tools work in their own Chrome window.',
+  inputSchema: z.object({ app: z.enum(ALLOWED_APPS) }),
+  execute: async ({ app }) => {
+    await openApp(app);
+    await log({ tool: 'open_app', app });
+    return `ok: opened ${app}. If it was not running, it may take a few seconds to start.`;
   },
 });
 

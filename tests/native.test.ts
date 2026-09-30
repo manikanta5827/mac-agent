@@ -30,3 +30,18 @@ test('formatSnapshot gives refs to actionable elements, keeps text, skips empty 
   expect(refs.get('a2')?.path).toBe('0.1');
   expect(refs.size).toBe(2); // disabled Save button gets no ref
 });
+
+test('formatSnapshot names untitled window buttons from their subrole', () => {
+  const { text } = formatSnapshot({
+    app: 'Docker Desktop', pid: 1, truncated: false,
+    nodes: [
+      node('0', 0, 'AXWindow', { name: 'Images' }),
+      node('0.1', 1, 'AXButton', { subrole: 'AXCloseButton', actions: ['AXPress'] }),
+      node('0.2', 1, 'AXButton', { actions: ['AXPress'] }),
+    ],
+  });
+  expect(text.split('\n').slice(2)).toEqual([
+    '  - button "close window" [ref=a1]',
+    '  - button (no name) [ref=a2]',
+  ]);
+});

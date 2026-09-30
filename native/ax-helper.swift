@@ -80,6 +80,13 @@ func windows(_ app: AXUIElement) -> [AXUIElement] {
     (attribute(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []
 }
 
+/// Top-level UI of the app: all its children except the menu bar (windows, sheets, panels, dialogs).
+/// Some panels (e.g. file pickers) are not in the AXWindows list but are children of the app.
+func roots(_ app: AXUIElement) -> [AXUIElement] {
+    let tops = children(app).filter { text($0, kAXRoleAttribute) != "AXMenuBar" }
+    return tops.isEmpty ? windows(app) : tops
+}
+
 func point(_ element: AXUIElement, _ name: String) -> CGPoint? {
     guard let value = attribute(element, name), CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
     var p = CGPoint.zero
@@ -107,7 +114,9 @@ func name(_ element: AXUIElement) -> String? {
 // ---------- finding the app and elements ----------
 
 func runningApp(named appName: String) -> NSRunningApplication? {
-    NSWorkspace.shared.runningApplications.first { $0.localizedName == appName }
+    NSWorkspace.shared.runningApplications.first {
+        $0.localizedName?.caseInsensitiveCompare(appName) == .orderedSame
+    }
 }
 
 func appElement(_ app: NSRunningApplication) -> AXUIElement {
@@ -120,9 +129,9 @@ func appElement(_ app: NSRunningApplication) -> AXUIElement {
 func element(at path: String, in app: AXUIElement) -> AXUIElement? {
     let steps = path.split(separator: ".").compactMap { Int($0) }
     guard let first = steps.first, steps.count == path.split(separator: ".").count else { return nil }
-    let wins = windows(app)
-    guard first >= 0, first < wins.count else { return nil }
-    var current = wins[first]
+    let tops = roots(app)
+    guard first >= 0, first < tops.count else { return nil }
+    var current = tops[first]
     for index in steps.dropFirst() {
         let kids = children(current)
         guard index >= 0, index < kids.count else { return nil }
@@ -160,8 +169,8 @@ func snapshot(_ app: NSRunningApplication) -> Snapshot {
         }
     }
 
-    for (i, window) in windows(root).enumerated() {
-        visit(window, path: "\(i)", depth: 0)
+    for (i, top) in roots(root).enumerated() {
+        visit(top, path: "\(i)", depth: 0)
     }
     return Snapshot(app: app.localizedName ?? "", pid: app.processIdentifier, nodes: nodes, truncated: truncated)
 }
@@ -193,11 +202,30 @@ if command == "check" {
 guard AXIsProcessTrusted() else {
     fail("Accessibility permission missing for the app running this (System Settings > Privacy & Security > Accessibility)")
 }
-guard args.count >= 2, let app = runningApp(named: args[1]) else { fail("App is not running: \(args.count >= 2 ? args[1] : "?")") }
+guard args.count >= 2, let app = runningApp(named: args[1]) else {
+    fail("App is not running: \(args.count >= 2 ? args[1] : "?"). Open it first (open_app), then take the snapshot.")
+}
 
 switch command {
 case "snapshot":
+    // Electron / Chromium apps (Docker Desktop, Slack, VS Code, ...) only build their accessibility tree
+    // when an assistive tool asks for it. Ask; other apps just ignore this attribute.
+    let root = appElement(app)
+    if AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue) == .success {
+        Thread.sleep(forTimeInterval: 0.5) // give the app a moment to build the tree the first time
+    }
     output(snapshot(app))
+
+case "debug":
+    // What does the app expose at the top level? Helps when a snapshot comes back empty.
+    let root = appElement(app)
+    let describeTop = { (e: AXUIElement) in "\(text(e, kAXRoleAttribute) ?? "?") \"\(name(e) ?? "")\" children=\(children(e).count)" }
+    output([
+        "app": [app.localizedName ?? "", app.bundleIdentifier ?? ""],
+        "appChildren": children(root).map(describeTop),
+        "windows": windows(root).map(describeTop),
+        "focusedWindow": [(attribute(root, kAXFocusedWindowAttribute)).map { describeTop($0 as! AXUIElement) } ?? "none"],
+    ])
 
 case "press", "focus", "set":
     guard args.count >= 4 else { fail("usage: ax-helper \(command) <app> <path> <role>\(command == "set" ? " <text>" : "")") }

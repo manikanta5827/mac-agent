@@ -199,12 +199,12 @@ export async function capture(
 // ---------- apps ----------
 
 /** Apps the agent may launch. Anything else has to be opened through the GUI (e.g. Spotlight). */
-export const ALLOWED_APPS = ['Google Chrome', 'TextEdit', 'Finder', 'Calculator', 'WhatsApp'] as const;
+export const ALLOWED_APPS = ['Google Chrome', 'TextEdit', 'Finder', 'Calculator', 'WhatsApp', "Docker Desktop"] as const;
 
-export async function openApp(app: string, url?: string): Promise<void> {
+/** Opens (or brings to front) an app. Websites go through the browser_* tools, not here. */
+export async function openApp(app: string): Promise<void> {
   if (!(ALLOWED_APPS as readonly string[]).includes(app)) {
     throw new Error(`App "${app}" is not allowed. Allowed: ${ALLOWED_APPS.join(', ')}`);
   }
-  if (url !== undefined && !/^https:\/\//.test(url)) throw new Error('Only https:// URLs are allowed');
-  await run(url ? ['open', '-a', app, url] : ['open', '-a', app]);
+  await run(['open', '-a', app]);
 }
