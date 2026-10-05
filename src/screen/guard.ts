@@ -1,6 +1,4 @@
-import path from 'node:path';
-
-const HELPER = path.join(import.meta.dir, '..', 'bin', 'ax-helper');
+import { frontmostApp } from '../native/helper';
 
 const BLOCKED_BUNDLE_IDS = new Set([
   'com.apple.Terminal', 'com.googlecode.iterm2', 'com.mitchellh.ghostty', 'net.kovidgoyal.kitty',
@@ -13,17 +11,6 @@ const BLOCKED_BUNDLE_IDS = new Set([
 ]);
 const BLOCKED_BUNDLE_PREFIXES = ['dev.warp.', 'com.jetbrains.'];
 
-export function isBlockedApp(bundleId: string): boolean {
-  return BLOCKED_BUNDLE_IDS.has(bundleId) || BLOCKED_BUNDLE_PREFIXES.some((prefix) => bundleId.startsWith(prefix));
-}
-
-async function frontmostApp(): Promise<{ name: string; bundleId: string }> {
-  const proc = Bun.spawn([HELPER, 'frontmost'], { stdout: 'pipe', stderr: 'ignore', timeout: 5_000 });
-  const stdout = await new Response(proc.stdout).text();
-  await proc.exited;
-  return JSON.parse(stdout);
-}
-
 export async function assertInputAllowed(what: string): Promise<void> {
   let front: { name: string; bundleId: string };
   try {
@@ -31,7 +18,9 @@ export async function assertInputAllowed(what: string): Promise<void> {
   } catch {
     throw new Error(`Blocked ${what}: could not check which app is in front (is bin/ax-helper built?).`);
   }
-  if (!front.bundleId || isBlockedApp(front.bundleId)) {
+  const blocked = BLOCKED_BUNDLE_IDS.has(front.bundleId)
+    || BLOCKED_BUNDLE_PREFIXES.some((prefix) => front.bundleId.startsWith(prefix));
+  if (!front.bundleId || blocked) {
     throw new Error(
       `Blocked ${what}: "${front.name || 'unknown app'}" is in front, and input to terminals, script runners, ` +
       'code editors, AI apps and security settings is not allowed. Switch to the app you need with open_app first.',
@@ -60,8 +49,7 @@ export function assertSafeText(text: string): void {
 
 export function assertSafeKey(key: string, modifiers: string[]): void {
   const mods = new Set(modifiers);
-  const isDelete = key === 'delete' || key === 'fwd-delete';
-  if (isDelete && mods.has('cmd') && (mods.has('shift') || mods.has('alt'))) {
+  if ((key === 'delete' || key === 'fwd-delete') && mods.has('cmd') && (mods.has('shift') || mods.has('alt'))) {
     throw new Error('Blocked key: cmd+shift+delete / cmd+option+delete empty the Trash or delete files permanently.');
   }
 }

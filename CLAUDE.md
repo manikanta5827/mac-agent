@@ -1,111 +1,83 @@
----
-description: Use Bun instead of Node.js, npm, pnpm, or vite.
-globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
-alwaysApply: false
----
+# CLAUDE.md
 
-Default to using Bun instead of Node.js.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
-- Bun automatically loads .env, so don't use dotenv.
+## Commands
 
-## APIs
-
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
-- `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
-
-## Testing
-
-Use `bun test` to run tests.
-
-```ts#index.test.ts
-import { test, expect } from "bun:test";
-
-test("hello world", () => {
-  expect(1).toBe(1);
-});
+```bash
+bun install
+bun run build:ax          # swiftc native/ax-helper.swift -> bin/ax-helper (required; bin/ is not committed)
+bun run index.ts          # start the agent TUI
+bun test                  # all tests
+bun test -t "paginate"    # one test by name
+bunx tsc --noEmit         # typecheck
 ```
 
-## Frontend
+`bun run index.ts` opens an interactive TUI and drives the real mouse, keyboard
+and Chrome, so don't start it to "check" a change — import the modules instead
+(`bun -e 'const { appSnapshot } = await import("./src/native/native"); ...'`).
 
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
+External tools the code shells out to: `cliclick` (brew), `agent-browser`
+(`AGENT_BROWSER_BIN` or `PATH`), `bin/ax-helper`, and macOS `screencapture`,
+`sips`, `osascript`, `system_profiler`. The terminal running the agent needs
+Accessibility and Screen Recording permission.
 
-Server:
+`boxes-app/` is a separate Electron window full of clickable boxes, used as a
+target to test the agent against (`cd boxes-app && bun run start`).
 
-```ts#index.ts
-import index from "./index.html"
+## Architecture
 
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
+The model gets one flat `ToolSet` (`src/tools.ts`) built from three families,
+each a folder that holds its logic plus a single `tools.ts` — the only
+model-aware file in that folder. Add a tool to the family's `tools.ts`; put the
+logic that does the work in a sibling file.
 
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
+- `screen/` — pixels: screenshots, mouse, keyboard. The fallback family.
+- `browser/` — websites, by shelling out to the `agent-browser` CLI in one named session.
+- `native/` — Mac apps, through the Accessibility API via `bin/ax-helper`.
 
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
+`core/` is the shared plumbing every family uses: `sh.ts` (the only place that
+spawns a process), `log.ts` (JSONL logs plus the `logged()` wrapper), `text.ts`
+(`paginate()`). `agent/` holds the system prompt and context compaction.
 
-With the following `frontend.tsx`:
+### Two coordinate spaces
 
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
+Everything the model sees is **screenshot pixels** (`IMAGE_HEIGHT` 768, width
+derived from the display's aspect ratio). Everything the OS takes — `cliclick`,
+`screencapture -R`, Accessibility rectangles — is **screen points**.
+`src/screen/screen.ts` is the only crossing: `toScreenPoint` (model → OS, and
+it throws on off-screen points) and `toImagePoint` (OS → model). Never scale
+coordinates anywhere else, and never hand the model a screen point.
 
-// import .css files directly and it works
-import './index.css';
+### Refs are stateful and go stale
 
-const root = createRoot(document.body);
+`app_snapshot` / `app_screenshot` rebuild a module-level `Map` of `aN` refs in
+`src/native/native.ts`; an `aN` only resolves against the newest snapshot, so
+every acting tool tells the model to snapshot again. Browser `@eN` refs are
+owned by `agent-browser` and behave the same way. This is deliberate, not a
+cache to improve.
 
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
+### The guard is a primitive, not a tool rule
 
-root.render(<Frontend />);
-```
+`src/screen/guard.ts` is called from inside `click`, `typeText` and `pressKey`
+in `src/screen/input.ts`, so any new tool that moves the mouse or types is
+covered automatically. It refuses input while a terminal, editor, AI app or
+security pane is frontmost, refuses shell-looking text, and refuses the
+empty-Trash shortcuts. `ALLOWED_APPS` in `input.ts` is the app allowlist.
+Changes here are a trust boundary — don't simplify them away.
 
-Then, run index.ts
+### Context compaction
 
-```sh
-bun --hot ./index.ts
-```
+Every 10 steps `src/agent/compaction.ts` replaces all but the newest 3 images
+and all but the newest `browser_snapshot` / `app_snapshot` with a short note.
+That is why image tool results carry their file name: `view_screenshot` is the
+escape hatch for an image that was dropped. A new tool that returns an image
+should go through `shotToModel` so compaction can find it.
 
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+## Bun conventions
+
+Bun, not Node. `bun <file>`, `bun test`, `bun install`, `bunx`. Bun loads
+`.env` itself, so no `dotenv`. Prefer `Bun.file`, `Bun.spawn`, `Bun.sleep`,
+`Bun.which`, `bun:sqlite`, `Bun.serve` over the Node equivalents and over
+`express`/`better-sqlite3`/`ws`. Bun API docs are in
+`node_modules/bun-types/docs/**.mdx`.
