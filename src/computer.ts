@@ -1,26 +1,19 @@
-// The executor: turns tool calls into real macOS commands (cliclick, screencapture, open).
-// Every command is spawned with an argument array, never a shell string,
-// so text written by the model can't be run as a shell command.
 import { mkdir, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import { assertInputAllowed, assertSafeKey, assertSafeText } from './guard';
 
-// logs/ lives in the project root (this file is in src/).
 const LOG_DIR = path.join(import.meta.dir, '..', 'logs');
 export const SHOT_DIR = path.join(LOG_DIR, 'shots');
 const AGENT_LOG = path.join(LOG_DIR, 'agent.jsonl');
-// One conversation file per run, e.g. logs/conversations/2026-09-29T09-35-26.jsonl
 const CONVERSATION_LOG = path.join(LOG_DIR, 'conversations', `${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.jsonl`);
 
 await mkdir(SHOT_DIR, { recursive: true });
 await mkdir(path.dirname(CONVERSATION_LOG), { recursive: true });
 
-/** One JSON line per action in logs/agent.jsonl. Watch it with: tail -f logs/agent.jsonl */
 export async function log(entry: Record<string, unknown>): Promise<void> {
   await appendFile(AGENT_LOG, JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n');
 }
 
-/** One JSON line per message in this run's conversation file (what the user said, what the model thought and did). */
 export async function logConversation(entry: Record<string, unknown>): Promise<void> {
   await appendFile(CONVERSATION_LOG, JSON.stringify({ t: new Date().toISOString(), ...entry }) + '\n');
 }
@@ -36,14 +29,12 @@ async function run(cmd: string[]): Promise<{ stdout: string; stderr: string }> {
   return { stdout: stdout.trim(), stderr: stderr.trim() };
 }
 
-// ---------- screen info ----------
-
 export type ScreenInfo = {
-  pointsWidth: number;  // what cliclick uses (e.g. 1440)
-  pointsHeight: number; // (e.g. 900)
-  pixelsWidth: number;  // framebuffer / screenshot size (e.g. 2880)
-  pixelsHeight: number; // (e.g. 1800)
-  scale: number;        // pixels per point (2 on Retina)
+  pointsWidth: number;
+  pointsHeight: number;
+  pixelsWidth: number;
+  pixelsHeight: number;
+  scale: number;
 };
 
 function parseSize(value: string | undefined): [number, number] | null {
@@ -53,7 +44,6 @@ function parseSize(value: string | undefined): [number, number] | null {
 
 let cachedScreen: ScreenInfo | null = null;
 
-/** Reads the main display's point and pixel size from system_profiler (no permission needed). */
 export async function getScreenInfo(): Promise<ScreenInfo> {
   if (cachedScreen) return cachedScreen;
   const { stdout } = await run(['system_profiler', 'SPDisplaysDataType', '-json']);
@@ -73,7 +63,6 @@ export async function getScreenInfo(): Promise<ScreenInfo> {
   return cachedScreen;
 }
 
-/** Throws if a point is outside the screen, so the model gets an error instead of a silent miss. */
 export async function ensureOnScreen(x: number, y: number): Promise<void> {
   const s = await getScreenInfo();
   if (x < 0 || y < 0 || x >= s.pointsWidth || y >= s.pointsHeight) {
@@ -81,11 +70,8 @@ export async function ensureOnScreen(x: number, y: number): Promise<void> {
   }
 }
 
-// ---------- mouse & keyboard (cliclick) ----------
-
 async function cliclick(commands: string[]): Promise<void> {
   const { stderr } = await run(['cliclick', ...commands]);
-  // cliclick exits 0 even without permission and only prints a warning. Turn that into a real error.
   if (stderr.includes('Accessibility privileges not enabled')) {
     throw new Error('Accessibility permission missing for the app running this agent (System Settings → Privacy & Security → Accessibility)');
   }
@@ -94,7 +80,6 @@ async function cliclick(commands: string[]): Promise<void> {
 export type ClickKind = 'left' | 'double' | 'right' | 'triple';
 const CLICK_COMMAND: Record<ClickKind, string> = { left: 'c', double: 'dc', right: 'rc', triple: 'tc' };
 
-/** Move first, wait for the move to land, then click (the video's "move, wait, click" rule). */
 export async function click(kind: ClickKind, x: number, y: number): Promise<void> {
   await assertInputAllowed('click');
   await cliclick([`m:${x},${y}`, 'w:100', `${CLICK_COMMAND[kind]}:${x},${y}`]);
@@ -107,7 +92,6 @@ export async function moveMouse(x: number, y: number): Promise<void> {
 export async function typeText(text: string): Promise<void> {
   assertSafeText(text);
   await assertInputAllowed('typing');
-  // cliclick's t: drops line breaks, so type each line and press return in between.
   const lines = text.split(/\r?\n/);
   for (const [i, line] of lines.entries()) {
     if (i > 0) await pressKey('return');
@@ -115,9 +99,6 @@ export async function typeText(text: string): Promise<void> {
   }
 }
 
-// macOS key codes for named keys. These are pressed through System Events (osascript),
-// because Chrome ignores cliclick's `kp:` presses (tested: kp:return typed nothing in the
-// address bar, System Events `key code 36` worked).
 const KEY_CODES = {
   'return': 36, 'enter': 76, 'tab': 48, 'space': 49, 'esc': 53, 'escape': 53, 'delete': 51, 'fwd-delete': 117,
   'arrow-up': 126, 'arrow-down': 125, 'arrow-left': 123, 'arrow-right': 124,
@@ -127,7 +108,6 @@ const KEY_CODES = {
 } as const;
 export const NAMED_KEYS = Object.keys(KEY_CODES) as (keyof typeof KEY_CODES)[];
 
-// Modifier name → cliclick name (kd:/ku:) and AppleScript name (`using {...}`).
 const MODIFIER_NAMES = {
   cmd: { cliclick: 'cmd', applescript: 'command down' },
   shift: { cliclick: 'shift', applescript: 'shift down' },
@@ -136,32 +116,25 @@ const MODIFIER_NAMES = {
 } as const;
 export const MODIFIERS = Object.keys(MODIFIER_NAMES) as (keyof typeof MODIFIER_NAMES)[];
 
-/** A named key (e.g. "return") or a single character (e.g. "l"), optionally with modifiers held down. */
 export async function pressKey(key: string, modifiers: (keyof typeof MODIFIER_NAMES)[] = []): Promise<void> {
   assertSafeKey(key, modifiers);
   await assertInputAllowed('key press');
   if (key in KEY_CODES) {
-    // e.g. tell application "System Events" to key code 36 using {command down}
-    // The script is built only from the fixed tables above, never from free text.
     const using = modifiers.length ? ` using {${modifiers.map((m) => MODIFIER_NAMES[m].applescript).join(', ')}}` : '';
     await run(['osascript', '-e', `tell application "System Events" to key code ${KEY_CODES[key as keyof typeof KEY_CODES]}${using}`]);
     return;
   }
   if ([...key].length !== 1) throw new Error(`Unknown key "${key}". Use a single character or one of: ${NAMED_KEYS.join(', ')}`);
 
-  // Single characters (with or without modifiers) work with cliclick, e.g. cmd+l.
   if (modifiers.length === 0) return cliclick([`t:${key}`]);
   const mods = modifiers.map((m) => MODIFIER_NAMES[m].cliclick).join(',');
   await cliclick([`kd:${mods}`, `t:${key}`, `ku:${mods}`]);
 }
 
-// ---------- screenshots (screencapture) ----------
-
 export type Shot = { path: string; width: number; height: number };
 
 let shotCounter = 0;
 
-/** Shrinks an image in place so it is at most `maxWidth` wide (keeps the aspect ratio). */
 export async function shrinkToWidth(file: string, maxWidth: number): Promise<{ width: number; height: number }> {
   const size = await imageSize(file);
   if (size.width > maxWidth) await run(['sips', '--resampleWidth', String(maxWidth), file]);
@@ -175,12 +148,6 @@ async function imageSize(file: string): Promise<{ width: number; height: number 
   return { width, height };
 }
 
-/**
- * Full-screen capture, or only a region when `region` (in points) is given.
- * `resizeTo` shrinks the image to exactly that size (the size the model works in).
- * JPEG keeps each image ~10x smaller than PNG, which matters because every
- * screenshot is re-sent to the model on every later step.
- */
 export async function capture(
   region?: { x: number; y: number; width: number; height: number },
   resizeTo?: { width: number; height: number },
@@ -193,25 +160,15 @@ export async function capture(
   args.push(file);
   await run(args);
 
-  // Without Screen Recording permission screencapture can fail silently and write nothing.
   if (!(await Bun.file(file).exists())) {
     throw new Error('Screenshot was not created. Check Screen Recording permission for the app running this agent.');
   }
-  // sips -z takes height first, then width.
   if (resizeTo) await run(['sips', '-z', String(resizeTo.height), String(resizeTo.width), file]);
   return { path: file, ...(await imageSize(file)) };
 }
 
-// ---------- apps ----------
-
-/**
- * Apps the agent may launch and read/press through the Accessibility API. Never add terminals, code editors
- * (Cursor, VS Code: built-in terminal and AI agent) or script runners: app_press does not go through the
- * keyboard guard in guard.ts, so pressing "Run" in such an app would run commands.
- */
 export const ALLOWED_APPS = ['Google Chrome', 'TextEdit', 'Finder', 'Calculator', 'WhatsApp', 'Docker Desktop'] as const;
 
-/** Opens (or brings to front) an app. Websites go through the browser_* tools, not here. */
 export async function openApp(app: string): Promise<void> {
   if (!(ALLOWED_APPS as readonly string[]).includes(app)) {
     throw new Error(`App "${app}" is not allowed. Allowed: ${ALLOWED_APPS.join(', ')}`);

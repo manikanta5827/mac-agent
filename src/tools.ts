@@ -9,11 +9,6 @@ import { browser, browserSnapshot, safeArg, splitIntoParts, toRef } from './brow
 import { appFocus, appPress, appScreenshot, appSnapshot } from './native';
 import { IMAGE_HEIGHT, IMAGE_WIDTH, mapScreenToPoint } from './mapper';
 
-/**
- * Sends the image file to the model as the tool result, plus a short text header.
- * The header includes the file name, so after compaction removes the image the model
- * can still get it back with view_screenshot.
- */
 async function shotToModel(output: { path: string; note: string }) {
   const base64 = Buffer.from(await Bun.file(output.path).arrayBuffer()).toString('base64');
   return {
@@ -26,7 +21,7 @@ async function shotToModel(output: { path: string; note: string }) {
 }
 
 async function takeScreenshot(settleMs: number) {
-  await Bun.sleep(settleMs); // let the app finish redrawing after the previous action
+  await Bun.sleep(settleMs);
   const shot = await capture(undefined, { width: IMAGE_WIDTH, height: IMAGE_HEIGHT });
   await log({ tool: 'screenshot', path: shot.path, width: shot.width, height: shot.height });
   return shot;
@@ -44,8 +39,6 @@ const screenshot = tool({
 
 const CLICK_KINDS = { left_click: 'left', double_click: 'double', right_click: 'right' } as const;
 
-// The only tool that uses mouse and keyboard. The model sends a list of actions,
-// we run them one after another in a plain loop, then return one screenshot.
 const actions = tool({
   description:
     'Do one or more mouse/keyboard actions in order, then get ONE screenshot of the result. ' +
@@ -98,16 +91,13 @@ const actions = tool({
           case 'double_click':
           case 'right_click':
           case 'move_mouse': {
-            // check if co-ordinates exist or not
             if (a.x === undefined || a.y === undefined) {
               throw new Error(`${a.action} needs x and y`);
             }
 
-            // map the co-ordinates
             const mapped = mapScreenToPoint(a.x, a.y);
             await ensureOnScreen(mapped.x, mapped.y);
 
-            // if mouse move do that else click it
             if (a.action === 'move_mouse') {
               await moveMouse(mapped.x, mapped.y);
             }
@@ -115,13 +105,12 @@ const actions = tool({
               await click(CLICK_KINDS[a.action], mapped.x, mapped.y);
             }
 
-            // log the action
             await log({ tool: a.action, raw: { x: a.x, y: a.y }, mapped });
             break;
           }
         }
         results.push(`${label}: ok`);
-        await Bun.sleep(150); // small gap so each action lands before the next one
+        await Bun.sleep(150);
       } catch (err) {
         failed = true;
         const message = err instanceof Error ? err.message : String(err);
@@ -151,8 +140,6 @@ const zoom = tool({
     const bottomRight = mapScreenToPoint(x + width, y + height);
     const region = { x: topLeft.x, y: topLeft.y, width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y };
     if (region.width < 1 || region.height < 1) throw new Error('Zoom region is too small');
-    // Both corners must be on screen. The bottom-right edge itself is exclusive (like x < 1440),
-    // so the last pixel inside the region is (bottomRight - 1).
     await ensureOnScreen(topLeft.x, topLeft.y);
     await ensureOnScreen(bottomRight.x - 1, bottomRight.y - 1);
     const shot = await capture(region);
@@ -178,36 +165,27 @@ const open_app = tool({
   },
 });
 
-// Shows an older screenshot again. Only file names inside logs/shots are allowed,
-// so the model cannot use this to read other files (like .env).
 const view_screenshot = tool({
   description: 'See an older screenshot or zoom image again, by the file name shown in its tool result (e.g. "1790624481391-14.jpg").',
   inputSchema: z.object({ file: z.string() }),
   execute: async ({ file }) => {
 
-    // validate the inputs
     if (file !== path.basename(file) || !file.endsWith('.jpg')) {
       throw new Error('Give only a .jpg file name from a tool result, no folders');
     }
 
-    // construct the path
     const fullPath = path.join(SHOT_DIR, file);
 
-    // check if path exists
     if (!(await Bun.file(fullPath).exists())) {
       throw new Error(`No screenshot named ${file}`);
     }
 
-    // log the action
     await log({ tool: 'view_screenshot', file });
     return { path: fullPath, note: 'Older image, NOT the current screen.' };
   },
   toModelOutput: ({ output }) => shotToModel(output),
 });
 
-// ---------- Chrome (agent-browser): act on elements by ref, no pixels ----------
-
-/** Runs one agent-browser command for a tool (or `run` for custom steps), logs it, and returns its output. */
 async function browserTool(tool: string, args: string[], run = () => browser(args)): Promise<string> {
   try {
     const output = await run();
@@ -301,18 +279,14 @@ const browser_screenshot = tool({
     const legend = await browserTool('browser_screenshot', [
       '--screenshot-format', 'jpeg', '--screenshot-quality', '80', 'screenshot', '--annotate', file,
     ]);
-    const size = await shrinkToWidth(file, IMAGE_WIDTH); // fewer image tokens; clicks use refs, not pixels
+    const size = await shrinkToWidth(file, IMAGE_WIDTH);
     return { path: file, ...size, note: `Annotated Chrome screenshot. Label [N] = ref @eN.\n${legend}` };
   },
   toModelOutput: ({ output }) => shotToModel(output),
 });
 
-// ---------- native Mac apps (Accessibility tree via bin/ax-helper): act on elements by ref ----------
-
-// Chrome has its own browser_* tools.
 const NATIVE_APPS = ALLOWED_APPS.filter((app) => app !== 'Google Chrome') as [string, ...string[]];
 
-/** Runs one native-app step for a tool, logs it, and returns its text. */
 async function nativeTool(tool: string, input: Record<string, unknown>, run: () => Promise<string>): Promise<string> {
   try {
     const output = await run();
@@ -372,21 +346,17 @@ const app_type = tool({
   inputSchema: z.object({ ref: z.string().describe('Ref like "a12"'), text: z.string().min(1) }),
   execute: ({ ref, text }) => nativeTool('app_type', { ref, text }, async () => {
     const result = await appFocus(ref);
-    await Bun.sleep(300); // let the app come to the front before typing
+    await Bun.sleep(300);
     await typeText(text);
     return `typed into ${result.role ?? ''} "${result.name ?? ''}". Take a new app_snapshot to check.`;
   }),
 });
 
 export const tools: ToolSet = {
-  // native Mac apps: structure first (Accessibility tree), pixels as the fallback
   app_snapshot, app_screenshot, app_press, app_type,
-  // whole-screen tools (pixels) for native Mac apps
   screenshot, actions, zoom, open_app, view_screenshot,
-  // Chrome tools (page structure + refs)
   browser_snapshot, browser_open, browser_click, browser_fill, browser_press, browser_scroll, browser_back, browser_wait,
   browser_screenshot,
 };
 
-// Record the screen geometry once per run, so each log says which sizes were in play.
 await log({ event: 'start', screen: await getScreenInfo() });

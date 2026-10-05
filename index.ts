@@ -8,15 +8,14 @@ import { runAgentTUI } from '@ai-sdk/tui';
 export const openrouter = createOpenRouter({
     apiKey: process.env.LLM_API_KEY,
 });
-// Disable verbose AI SDK compatibility warnings in production logs
 (globalThis as any).AI_SDK_LOG_WARNINGS = false;
 
 const MAX_ITERATIONS = 70;
-const CUT_EVERY_STEPS = 10; // every 10 steps, hide old images in one go
+const CUT_EVERY_STEPS = 10;
 const KEEP_IMAGES = 3;
 
 const agent = new ToolLoopAgent({
-    model: openrouter("openai/gpt-6-luna-pro") as LanguageModel,
+    model: openrouter("deepseek/deepseek-v4.1-flash") as LanguageModel,
     instructions: [
         'You control a macOS computer through tools.',
         'WEBSITES (Chrome): use the browser_* tools, never screenshot/actions/zoom. The browser tab is already open; ' +
@@ -48,28 +47,22 @@ const agent = new ToolLoopAgent({
     stopWhen: stepCountIs(MAX_ITERATIONS),
     tools: tools,
     prepareStep: async ({ messages, stepNumber }) => {
-        // A new user message starts at step 0: save it to the conversation log.
         if (stepNumber === 0) {
             const userMessage = messages.findLast((m) => m.role === 'user');
             await logConversation({ role: 'user', content: userMessage?.content });
         }
 
-        // check if it is the 10th sequence step or not
         if (stepNumber === 0 || stepNumber % CUT_EVERY_STEPS !== 0) return {};
 
-        // count the images
         const before = countImages(messages);
 
-        // log the action
         await log({ event: 'compaction', step: stepNumber, imagesBefore: before, imagesAfter: Math.min(before, KEEP_IMAGES) });
 
-        // compact the images, and keep only the newest page / app snapshot (older ones describe old screens)
         let compacted = keepNewestImages(messages, KEEP_IMAGES);
         compacted = keepNewestToolResults(compacted, 'browser_snapshot', 1);
         compacted = keepNewestToolResults(compacted, 'app_snapshot', 1);
         return { messages: compacted };
     },
-    // One line per model call in logs/agent.jsonl, so each run can be measured afterwards.
     onStepEnd: async (step) => {
         await log({
             event: 'step',
@@ -81,10 +74,8 @@ const agent = new ToolLoopAgent({
             outputTokens: step.usage.outputTokens,
             reasoningTokens: step.usage.outputTokenDetails.reasoningTokens,
             openrouter: step.providerMetadata?.openrouter?.usage,
-            provider: step.providerMetadata?.openrouter?.provider, // which OpenRouter provider served this call
+            provider: step.providerMetadata?.openrouter?.provider,
         });
-        // Full conversation for debugging: what the model thought, said and did, and what the tools returned.
-        // Images are not copied here; tool results only hold the file path (see logs/shots).
         await logConversation({
             step: step.stepNumber,
             role: 'assistant',
