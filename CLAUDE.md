@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 bun install
-bun run build:ax          # swiftc native/ax-helper.swift -> bin/ax-helper (required; bin/ is not committed)
+bun run build:ax          # swiftc native/*.swift -> bin/ax-helper (required; bin/ is not committed)
 bun run index.ts          # start the agent TUI
 bun test                  # all tests
 bun test -t "paginate"    # one test by name
