@@ -1,7 +1,9 @@
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { stepCountIs, type LanguageModel, ToolLoopAgent } from 'ai';
 import { runAgentTUI } from '@ai-sdk/tui';
-import { tools } from './src/tools';
+import { screenTools } from './src/screen/tools';
+import { browserTools } from './src/browser/tools';
+import { nativeTools } from './src/native/tools';
 import { log, logConversation } from './src/core/log';
 import { SCREEN } from './src/screen/screen';
 import { compact } from './src/agent/compaction';
@@ -18,7 +20,7 @@ const agent = new ToolLoopAgent({
   model: openrouter('deepseek/deepseek-v4.1-flash') as LanguageModel,
   instructions: INSTRUCTIONS,
   stopWhen: stepCountIs(MAX_ITERATIONS),
-  tools,
+  tools: { ...screenTools, ...browserTools, ...nativeTools },
   prepareStep: async ({ messages, stepNumber }) => {
     if (stepNumber === 0) {
       await logConversation({ role: 'user', content: messages.findLast((m) => m.role === 'user')?.content });

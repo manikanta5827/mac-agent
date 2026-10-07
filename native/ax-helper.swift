@@ -6,7 +6,6 @@
 //          ax-helper snapshot <app>               -> JSON list of the app's UI elements
 //          ax-helper press <app> <path> <role>        -> press a button / menu item / checkbox
 //          ax-helper focus <app> <path> <role>        -> bring the app to front and focus the element (then type with cliclick)
-//          ax-helper set <app> <path> <role> <text>   -> replace the text value of a field
 //
 // <app> is the app's name, e.g. "TextEdit". <path> is where an element sits in the tree, e.g. "0.3.2"
 // = window 0 -> its child 3 -> that element's child 2. Each run is a new process, so elements are found
@@ -308,8 +307,8 @@ case "debug":
         "focusedWindow": [(attribute(root, kAXFocusedWindowAttribute)).map { describeTop($0 as! AXUIElement) } ?? "none"],
     ])
 
-case "press", "focus", "set":
-    guard args.count >= 4 else { fail("usage: ax-helper \(command) <app> <path> <role>\(command == "set" ? " <text>" : "")") }
+case "press", "focus":
+    guard args.count >= 4 else { fail("usage: ax-helper \(command) <app> <path> <role>") }
     guard let target = element(at: args[2], in: appElement(app)) else {
         fail("No element at path \(args[2]). The window changed: take a new snapshot.")
     }
@@ -320,14 +319,10 @@ case "press", "focus", "set":
     if command == "press" {
         let status = AXUIElementPerformAction(target, kAXPressAction as CFString)
         output(describe(target, ok: status == .success, error: status == .success ? nil : "press failed (\(status.rawValue))"))
-    } else if command == "focus" {
+    } else {
         app.activate()
         let status = AXUIElementSetAttributeValue(target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         output(describe(target, ok: status == .success, error: status == .success ? nil : "focus failed (\(status.rawValue))"))
-    } else {
-        guard args.count >= 5 else { fail("usage: ax-helper set <app> <path> <role> <text>") }
-        let status = AXUIElementSetAttributeValue(target, kAXValueAttribute as CFString, args[4] as CFString)
-        output(describe(target, ok: status == .success, error: status == .success ? nil : "set failed (\(status.rawValue))"))
     }
 
 default:

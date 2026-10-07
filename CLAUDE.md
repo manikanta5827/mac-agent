@@ -27,10 +27,10 @@ target to test the agent against (`cd boxes-app && bun run start`).
 
 ## Architecture
 
-The model gets one flat `ToolSet` (`src/tools.ts`) built from three families,
-each a folder that holds its logic plus a single `tools.ts` — the only
-model-aware file in that folder. Add a tool to the family's `tools.ts`; put the
-logic that does the work in a sibling file.
+The model gets one flat `ToolSet` built from three families (`screen/tools`,
+`browser/tools`, `native/tools`), each a folder that holds its logic plus a
+single `tools.ts` — the only model-aware file in that folder. Add a tool to the
+family's `tools.ts`; put the logic that does the work in a sibling file.
 
 - `screen/` — pixels: screenshots, mouse, keyboard. The fallback family.
 - `browser/` — websites, by shelling out to the `agent-browser` CLI in one named session.

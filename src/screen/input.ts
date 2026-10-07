@@ -33,9 +33,10 @@ export async function moveMouse(x: number, y: number): Promise<void> {
 export async function typeText(text: string): Promise<void> {
   assertSafeText(text);
   await assertInputAllowed('typing');
-  for (const [i, line] of text.split(/\r?\n/).entries()) {
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
     if (i > 0) await pressKey('return');
-    if (line) await cliclick([`t:${line}`]);
+    if (lines[i]) await cliclick([`t:${lines[i]}`]);
   }
 }
 

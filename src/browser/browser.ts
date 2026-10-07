@@ -26,6 +26,7 @@ export async function browser(args: string[], maxOutput = MAX_OUTPUT_CHARS): Pro
 const DECORATION_ROLES = new Set(['image', 'img', 'figure', 'LineBreak', 'strong', 'emphasis', 'separator']);
 const WRAPPER_ROLES = new Set(['generic', 'paragraph', 'group', 'list', 'listitem', 'section', 'none']);
 const MAX_TEXT_CHARS = 240;
+const LONG_TEXT_REGEX = new RegExp(`"([^"]{${MAX_TEXT_CHARS}})[^"]+"`, 'g');
 
 export function trimSnapshot(text: string): string {
   const out: string[] = [];
@@ -41,7 +42,7 @@ export function trimSnapshot(text: string): string {
     if (!hasRef && DECORATION_ROLES.has(role)) continue;
     if (!hasRef && !hasOwnText && WRAPPER_ROLES.has(role)) continue;
     const trimmed = role === 'StaticText' ? `${indent}- ${rest.trim()}` : line;
-    out.push(trimmed.replace(new RegExp(`"([^"]{${MAX_TEXT_CHARS}})[^"]+"`, 'g'), '"$1…"'));
+    out.push(trimmed.replace(LONG_TEXT_REGEX, '"$1…"'));
   }
   return out.join('\n');
 }
