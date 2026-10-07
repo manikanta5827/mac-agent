@@ -1,6 +1,5 @@
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { stepCountIs, type LanguageModel, ToolLoopAgent } from 'ai';
-import { runAgentTUI } from '@ai-sdk/tui';
+import { stepCountIs, type LanguageModel, ToolLoopAgent, type ModelMessage } from 'ai';
 import { screenTools } from './src/screen/tools';
 import { browserTools } from './src/browser/tools';
 import { nativeTools } from './src/native/tools';
@@ -9,30 +8,25 @@ import { SCREEN } from './src/screen/screen';
 import { compact } from './src/agent/compaction';
 import { INSTRUCTIONS } from './src/agent/prompt';
 
+// setup the openrouter
 export const openrouter = createOpenRouter({ apiKey: process.env.LLM_API_KEY });
 (globalThis as any).AI_SDK_LOG_WARNINGS = false;
 
+// constants
 const MAX_ITERATIONS = 70;
 const CUT_EVERY_STEPS = 10;
 const KEEP_IMAGES = 3;
 
+// create the tool loop agent
 const agent = new ToolLoopAgent({
   model: openrouter('deepseek/deepseek-v4.1-flash') as LanguageModel,
   instructions: INSTRUCTIONS,
   stopWhen: stepCountIs(MAX_ITERATIONS),
   tools: { ...screenTools, ...browserTools, ...nativeTools },
-  prepareStep: async ({ messages, stepNumber }) => {
-    if (stepNumber === 0) {
-      await log({ role: 'user', content: messages.findLast((m) => m.role === 'user')?.content });
-      return {};
-    }
-    if (stepNumber % CUT_EVERY_STEPS !== 0) return {};
-
-    const { messages: compacted, imagesBefore, imagesAfter } = compact(messages, KEEP_IMAGES);
-    await log({ event: 'compaction', step: stepNumber, imagesBefore, imagesAfter });
-    return { messages: compacted };
-  },
+  prepareStep: async ({ messages, stepNumber }) => prepareStep({ messages, stepNumber }),
   onStepEnd: async (step) => {
+
+    // log the usage
     await log({
       event: 'step',
       step: step.stepNumber,
@@ -41,6 +35,8 @@ const agent = new ToolLoopAgent({
       usage: step.usage,
       openrouter: step.providerMetadata?.openrouter,
     });
+
+    // log the steps and tool calls
     await log({
       step: step.stepNumber,
       role: 'assistant',
@@ -55,7 +51,23 @@ const agent = new ToolLoopAgent({
 });
 
 await log({ event: 'start', screen: SCREEN });
+
+// run the agent loop
 const { output } = await agent.generate({
   prompt: process.argv[2] || 'Take a screenshot of the screen',
 });
 console.log(output);
+
+
+// compact the messages on every 10th step
+async function prepareStep({ messages, stepNumber }: { messages: ModelMessage[]; stepNumber: number }) {
+  if (stepNumber === 0) {
+    await log({ role: 'user', content: messages.findLast((m) => m.role === 'user')?.content });
+    return {};
+  }
+  if (stepNumber % CUT_EVERY_STEPS !== 0) return {};
+
+  const { messages: compacted, imagesBefore, imagesAfter } = compact(messages, KEEP_IMAGES);
+  await log({ event: 'compaction', step: stepNumber, imagesBefore, imagesAfter });
+  return { messages: compacted };
+}
