@@ -37,7 +37,7 @@ family's `tools.ts`; put the logic that does the work in a sibling file.
 - `native/` — Mac apps, through the Accessibility API via `bin/ax-helper`.
 
 `core/` is the shared plumbing every family uses: `sh.ts` (the only place that
-spawns a process), `log.ts` (JSONL logs plus the `logged()` wrapper), `text.ts`
+spawns a process), `log.ts`, `text.ts`
 (`paginate()`). `agent/` holds the system prompt and context compaction.
 
 ### Two coordinate spaces

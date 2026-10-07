@@ -55,4 +55,7 @@ const agent = new ToolLoopAgent({
 });
 
 await log({ event: 'start', screen: SCREEN });
-await runAgentTUI({ title: 'Mac Agent', agent, tools: 'collapsed' });
+const { output } = await agent.generate({
+  prompt: process.argv[2] || 'Take a screenshot of the screen',
+});
+console.log(output);

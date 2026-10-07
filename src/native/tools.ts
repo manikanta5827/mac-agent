@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { tool } from 'ai';
-import { log, logged } from '../core/log';
+import { log } from '../core/log';
 import { ALLOWED_APPS, typeText } from '../screen/input';
 import { shotToModel } from '../screen/shot';
 import { appAct, appScreenshot, appSnapshot } from './native';
@@ -17,7 +17,7 @@ const app_snapshot = tool({
     app: z.enum(NATIVE_APPS),
     part: z.number().int().min(1).optional().describe('Which part of a long tree, default 1'),
   }),
-  execute: ({ app, part }) => logged('app_snapshot', { app, part }, () => appSnapshot(app, part)),
+  execute: ({ app, part }) => appSnapshot(app, part),
 });
 
 const app_screenshot = tool({
@@ -37,10 +37,10 @@ const app_screenshot = tool({
 const app_press = tool({
   description: 'Press a button, menu item, checkbox, tab or link in a native app, by ref from the latest app_snapshot. No mouse needed.',
   inputSchema: z.object({ ref: refInput }),
-  execute: ({ ref }) => logged('app_press', { ref }, async () => {
+  execute: async ({ ref }) => {
     const result = await appAct('press', ref);
     return `pressed ${result.role ?? ''} "${result.name ?? ''}". Take a new app_snapshot to see the result.`;
-  }),
+  },
 });
 
 const app_type = tool({
@@ -48,12 +48,12 @@ const app_type = tool({
     'Type text into a field of a native app, by ref: brings the app to the front, focuses the field, then types. ' +
     'Typing adds at the cursor; to replace existing text, press cmd+a first with the actions tool.',
   inputSchema: z.object({ ref: refInput, text: z.string().min(1) }),
-  execute: ({ ref, text }) => logged('app_type', { ref, text }, async () => {
+  execute: async ({ ref, text }) => {
     const result = await appAct('focus', ref);
     await Bun.sleep(300);
     await typeText(text);
     return `typed into ${result.role ?? ''} "${result.name ?? ''}". Take a new app_snapshot to check.`;
-  }),
+  },
 });
 
 export const nativeTools = { app_snapshot, app_screenshot, app_press, app_type };

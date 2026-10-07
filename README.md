@@ -66,7 +66,6 @@ only file that knows about the model. The three tool files are combined in
 | `index.ts` | Builds the agent: model, system prompt, step limit, logging per step, context compaction every 10 steps. Starts the TUI. |
 | `src/tools.ts` | Merges the screen, browser and native tool sets into one `ToolSet`. |
 | `src/core/sh.ts` | Runs a command. `run` returns stdout, stderr and the exit code; `runOk` throws if the code is not 0. Every other file uses these instead of spawning its own process. |
-| `src/core/log.ts` | Writes the JSONL logs and owns the log paths. `logged()` wraps a tool call so its input, output size or error always lands in the log. |
 | `src/core/text.ts` | `paginate()`: cuts long text into parts on line breaks and adds the `[part 2 of 5...]` header. Used for both browser and app snapshots. |
 | `src/screen/screen.ts` | Reads the main display size once, derives the screenshot size, and maps points between screen coordinates and screenshot pixels. `toScreenPoint` also rejects points outside the screen. |
 | `src/screen/shot.ts` | Takes screenshots (full screen, resized; or a region at full detail), reads and shrinks image sizes, and turns an image file into model content. |

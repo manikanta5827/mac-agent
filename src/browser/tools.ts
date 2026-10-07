@@ -1,13 +1,10 @@
 import path from 'node:path';
 import { z } from 'zod';
 import { tool } from 'ai';
-import { logged, SHOT_DIR } from '../core/log';
+import { SHOT_DIR } from '../core/log';
 import { IMAGE_WIDTH } from '../screen/screen';
 import { shotToModel, shrinkToWidth } from '../screen/shot';
 import { browser, browserSnapshot, safeArg, toRef } from './browser';
-
-const call = (name: string, args: string[], run = () => browser(args)) =>
-  logged(name, { args }, async () => (await run()) || 'ok');
 
 const refInput = z.string().describe('Element ref from the latest browser_snapshot, e.g. "@e12"');
 
@@ -19,7 +16,7 @@ const browser_snapshot = tool({
   inputSchema: z.object({
     part: z.number().int().min(1).optional().describe('Which part of a long page, default 1 (the top)'),
   }),
-  execute: ({ part }) => call('browser_snapshot', ['snapshot', String(part ?? 1)], () => browserSnapshot(part)),
+  execute: ({ part }) => browserSnapshot(part),
 });
 
 const browser_wait = tool({
@@ -30,37 +27,51 @@ const browser_wait = tool({
     text: z.string().min(1).optional().describe('Text that should appear on the page'),
     url_contains: z.string().min(1).optional().describe('Part of the URL to wait for, e.g. "/feed"'),
   }),
-  execute: ({ text, url_contains }) => call('browser_wait',
-    text ? ['wait', '--text', safeArg(text)]
-      : url_contains ? ['wait', '--url', `**${safeArg(url_contains)}**`]
-      : ['wait', '--load', 'networkidle']),
+  execute: async ({ text, url_contains }) => {
+    const res = await browser(
+      text ? ['wait', '--text', safeArg(text)]
+        : url_contains ? ['wait', '--url', `**${safeArg(url_contains)}**`]
+        : ['wait', '--load', 'networkidle'],
+    );
+    return res || 'ok';
+  },
 });
 
 const browser_open = tool({
   description: 'Open an https URL in the current Chrome tab.',
   inputSchema: z.object({ url: z.string().describe('https:// URL') }),
-  execute: ({ url }) => {
+  execute: async ({ url }) => {
     if (!url.startsWith('https://')) throw new Error('Only https:// URLs are allowed');
-    return call('browser_open', ['open', url]);
+    const res = await browser(['open', url]);
+    return res || 'ok';
   },
 });
 
 const browser_click = tool({
   description: 'Click an element in Chrome by its ref.',
   inputSchema: z.object({ ref: refInput }),
-  execute: ({ ref }) => call('browser_click', ['click', toRef(ref)]),
+  execute: async ({ ref }) => {
+    const res = await browser(['click', toRef(ref)]);
+    return res || 'ok';
+  },
 });
 
 const browser_fill = tool({
   description: 'Clear a text field in Chrome and type text into it, by its ref.',
   inputSchema: z.object({ ref: refInput, text: z.string().min(1) }),
-  execute: ({ ref, text }) => call('browser_fill', ['fill', toRef(ref), safeArg(text)]),
+  execute: async ({ ref, text }) => {
+    const res = await browser(['fill', toRef(ref), safeArg(text)]);
+    return res || 'ok';
+  },
 });
 
 const browser_press = tool({
   description: 'Press a key in Chrome, e.g. "Enter", "Tab", "Escape", "Control+a".',
   inputSchema: z.object({ key: z.string().min(1) }),
-  execute: ({ key }) => call('browser_press', ['press', safeArg(key)]),
+  execute: async ({ key }) => {
+    const res = await browser(['press', safeArg(key)]);
+    return res || 'ok';
+  },
 });
 
 const browser_scroll = tool({
@@ -69,13 +80,19 @@ const browser_scroll = tool({
     direction: z.enum(['up', 'down']),
     pixels: z.number().int().min(100).max(3000).optional().describe('How far, default 800'),
   }),
-  execute: ({ direction, pixels }) => call('browser_scroll', ['scroll', direction, String(pixels ?? 800)]),
+  execute: async ({ direction, pixels }) => {
+    const res = await browser(['scroll', direction, String(pixels ?? 800)]);
+    return res || 'ok';
+  },
 });
 
 const browser_back = tool({
   description: 'Go back one page in Chrome.',
   inputSchema: z.object({}),
-  execute: () => call('browser_back', ['back']),
+  execute: async () => {
+    const res = await browser(['back']);
+    return res || 'ok';
+  },
 });
 
 const browser_screenshot = tool({
@@ -85,9 +102,9 @@ const browser_screenshot = tool({
   inputSchema: z.object({}),
   execute: async () => {
     const file = path.join(SHOT_DIR, `${Date.now()}-browser.jpg`);
-    const legend = await call('browser_screenshot', [
+    const legend = (await browser([
       '--screenshot-format', 'jpeg', '--screenshot-quality', '80', 'screenshot', '--annotate', file,
-    ]);
+    ])) || 'ok';
     const size = await shrinkToWidth(file, IMAGE_WIDTH);
     return { path: file, ...size, note: `Annotated Chrome screenshot. Label [N] = ref @eN.\n${legend}` };
   },
