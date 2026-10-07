@@ -4,7 +4,7 @@ import { runAgentTUI } from '@ai-sdk/tui';
 import { screenTools } from './src/screen/tools';
 import { browserTools } from './src/browser/tools';
 import { nativeTools } from './src/native/tools';
-import { log, logConversation } from './src/core/log';
+import { log } from './src/core/log';
 import { SCREEN } from './src/screen/screen';
 import { compact } from './src/agent/compaction';
 import { INSTRUCTIONS } from './src/agent/prompt';
@@ -23,7 +23,7 @@ const agent = new ToolLoopAgent({
   tools: { ...screenTools, ...browserTools, ...nativeTools },
   prepareStep: async ({ messages, stepNumber }) => {
     if (stepNumber === 0) {
-      await logConversation({ role: 'user', content: messages.findLast((m) => m.role === 'user')?.content });
+      await log({ role: 'user', content: messages.findLast((m) => m.role === 'user')?.content });
       return {};
     }
     if (stepNumber % CUT_EVERY_STEPS !== 0) return {};
@@ -41,7 +41,7 @@ const agent = new ToolLoopAgent({
       usage: step.usage,
       openrouter: step.providerMetadata?.openrouter,
     });
-    await logConversation({
+    await log({
       step: step.stepNumber,
       role: 'assistant',
       reasoning: step.reasoningText,
@@ -49,7 +49,7 @@ const agent = new ToolLoopAgent({
       toolCalls: step.toolCalls.map((call) => ({ tool: call.toolName, input: call.input })),
     });
     for (const result of step.toolResults) {
-      await logConversation({ step: step.stepNumber, role: 'tool', tool: result.toolName, output: result.output });
+      await log({ step: step.stepNumber, role: 'tool', tool: result.toolName, output: result.output });
     }
   },
 });
