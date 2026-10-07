@@ -4,10 +4,14 @@ import { tool } from 'ai';
 import { SHOT_DIR } from '../core/log';
 import { IMAGE_WIDTH } from '../screen/screen';
 import { shotToModel, shrinkToWidth } from '../screen/shot';
-import { browser, browserSnapshot, safeArg, toRef } from './browser';
+import { browser, safeArg, toRef, trimSnapshot } from './browser';
+import { paginate } from '../core/text';
+import { RAW_SNAPSHOT_CHARS, PART_CHARS } from './browser';
 
+// input schema for the ref
 const refInput = z.string().describe('Element ref from the latest browser_snapshot, e.g. "@e12"');
 
+// get the snapshot of the current browser tab
 const browser_snapshot = tool({
   description:
     'Read the current Chrome tab as a text tree of elements (with page text). Interactive elements have refs like [ref=e12]. ' +
@@ -16,9 +20,19 @@ const browser_snapshot = tool({
   inputSchema: z.object({
     part: z.number().int().min(1).optional().describe('Which part of a long page, default 1 (the top)'),
   }),
-  execute: ({ part }) => browserSnapshot(part),
+  execute: async ({ part }) => {
+    // take the snapshot
+    const raw = await browser(['snapshot', '-c'], RAW_SNAPSHOT_CHARS);
+
+    // remove images and unneccessary text
+    const trimmed = trimSnapshot(raw.replace(/\n\[truncated:[^\]]*\]\s*$/, ''));
+
+    // paginate the snapshot
+    return paginate(trimmed, PART_CHARS, part ?? 1, 'browser_snapshot') || '(empty page)';
+  },
 });
 
+// wait for the page
 const browser_wait = tool({
   description:
     'Wait after an action that changes the page. Give text you expect to appear, or part of the URL you expect; ' +
@@ -37,6 +51,7 @@ const browser_wait = tool({
   },
 });
 
+// open a url
 const browser_open = tool({
   description: 'Open an https URL in the current Chrome tab.',
   inputSchema: z.object({ url: z.string().describe('https:// URL') }),
@@ -46,6 +61,7 @@ const browser_open = tool({
   },
 });
 
+// click an element in that tab
 const browser_click = tool({
   description: 'Click an element in Chrome by its ref.',
   inputSchema: z.object({ ref: refInput }),
@@ -55,6 +71,7 @@ const browser_click = tool({
   },
 });
 
+// fill a field
 const browser_fill = tool({
   description: 'Clear a text field in Chrome and type text into it, by its ref.',
   inputSchema: z.object({ ref: refInput, text: z.string().min(1) }),
@@ -64,6 +81,7 @@ const browser_fill = tool({
   },
 });
 
+// press a button or anything
 const browser_press = tool({
   description: 'Press a key in Chrome, e.g. "Enter", "Tab", "Escape", "Control+a".',
   inputSchema: z.object({ key: z.string().min(1) }),
@@ -73,6 +91,7 @@ const browser_press = tool({
   },
 });
 
+// scroll the current page
 const browser_scroll = tool({
   description: 'Scroll the Chrome page up or down.',
   inputSchema: z.object({
@@ -85,6 +104,7 @@ const browser_scroll = tool({
   },
 });
 
+// go back to prev page
 const browser_back = tool({
   description: 'Go back one page in Chrome.',
   inputSchema: z.object({}),
@@ -94,6 +114,7 @@ const browser_back = tool({
   },
 });
 
+// select an option in dropdown
 const browser_select = tool({
   description: 'Select an option in a <select> dropdown by its ref and the option value or text.',
   inputSchema: z.object({
@@ -106,6 +127,7 @@ const browser_select = tool({
   },
 });
 
+// get the current url
 const browser_url = tool({
   description: 'Get the current Chrome tab URL. Fast and lightweight check for redirects and navigation.',
   inputSchema: z.object({}),
@@ -115,6 +137,7 @@ const browser_url = tool({
   },
 });
 
+// run multiple commands sequentially
 const browser_batch = tool({
   description:
     'Run multiple browser commands sequentially in one call (e.g. filling out multiple fields of a form). ' +
@@ -131,6 +154,7 @@ const browser_batch = tool({
   },
 });
 
+// close the browser
 const browser_close = tool({
   description: 'Close the browser session when done with web tasks.',
   inputSchema: z.object({}),
@@ -140,6 +164,7 @@ const browser_close = tool({
   },
 });
 
+// take a scrrenshot
 const browser_screenshot = tool({
   description:
     'Look at the Chrome tab. Every interactive element gets a red box with a number [N], which is ref @eN. ' +
@@ -156,6 +181,7 @@ const browser_screenshot = tool({
   toModelOutput: ({ output }) => shotToModel(output),
 });
 
+// export all the tools
 export const browserTools = {
   browser_snapshot, browser_open, browser_click, browser_fill, browser_select,
   browser_press, browser_scroll, browser_back, browser_wait, browser_url,

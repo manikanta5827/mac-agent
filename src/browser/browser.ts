@@ -1,16 +1,18 @@
 import { run } from '../core/sh';
-import { paginate } from '../core/text';
 
+// constants of the agent browser cli
 const BIN = process.env.AGENT_BROWSER_BIN ?? Bun.which('agent-browser');
 const SESSION = 'mac-agent';
 const CHROME_PROFILE = 'Default';
 const CHROME_APP = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const MAX_OUTPUT_CHARS = 25_000;
-const RAW_SNAPSHOT_CHARS = 400_000;
-const PART_CHARS = 20_000;
+export const RAW_SNAPSHOT_CHARS = 400_000;
+export const PART_CHARS = 20_000;
 
+// text for replacing the ignored warning
 const IGNORED_WARNING = /^.*ignored: daemon already running.*$\n?/gm;
 
+// run the browser cli commands
 export async function browser(args: string[], maxOutput = MAX_OUTPUT_CHARS): Promise<string> {
   if (!BIN) throw new Error('agent-browser not found. Set AGENT_BROWSER_BIN in .env to the agent-browser binary path.');
   const { stdout, stderr, code } = await run([
@@ -23,11 +25,13 @@ export async function browser(args: string[], maxOutput = MAX_OUTPUT_CHARS): Pro
   return out;
 }
 
+// trim the snapshot to the relevant text
 const DECORATION_ROLES = new Set(['image', 'img', 'figure', 'LineBreak', 'strong', 'emphasis', 'separator']);
 const WRAPPER_ROLES = new Set(['generic', 'paragraph', 'group', 'list', 'listitem', 'section', 'none']);
 const MAX_TEXT_CHARS = 240;
 const LONG_TEXT_REGEX = new RegExp(`"([^"]{${MAX_TEXT_CHARS}})[^"]+"`, 'g');
 
+// trim the snapshot
 export function trimSnapshot(text: string): string {
   const out: string[] = [];
   for (const line of text.split('\n')) {
@@ -45,12 +49,6 @@ export function trimSnapshot(text: string): string {
     out.push(trimmed.replace(LONG_TEXT_REGEX, '"$1…"'));
   }
   return out.join('\n');
-}
-
-export async function browserSnapshot(part = 1): Promise<string> {
-  const raw = await browser(['snapshot', '-c'], RAW_SNAPSHOT_CHARS);
-  const trimmed = trimSnapshot(raw.replace(/\n\[truncated:[^\]]*\]\s*$/, ''));
-  return paginate(trimmed, PART_CHARS, part, 'browser_snapshot') || '(empty page)';
 }
 
 export function safeArg(value: string): string {
