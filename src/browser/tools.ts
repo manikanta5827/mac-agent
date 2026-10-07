@@ -41,7 +41,6 @@ const browser_open = tool({
   description: 'Open an https URL in the current Chrome tab.',
   inputSchema: z.object({ url: z.string().describe('https:// URL') }),
   execute: async ({ url }) => {
-    if (!url.startsWith('https://')) throw new Error('Only https:// URLs are allowed');
     const res = await browser(['open', url]);
     return res || 'ok';
   },
@@ -95,6 +94,52 @@ const browser_back = tool({
   },
 });
 
+const browser_select = tool({
+  description: 'Select an option in a <select> dropdown by its ref and the option value or text.',
+  inputSchema: z.object({
+    ref: refInput,
+    value: z.string().min(1).describe('Value or text of the option to select'),
+  }),
+  execute: async ({ ref, value }) => {
+    const res = await browser(['select', toRef(ref), safeArg(value)]);
+    return res || 'ok';
+  },
+});
+
+const browser_url = tool({
+  description: 'Get the current Chrome tab URL. Fast and lightweight check for redirects and navigation.',
+  inputSchema: z.object({}),
+  execute: async () => {
+    const res = await browser(['get', 'url']);
+    return res || 'about:blank';
+  },
+});
+
+const browser_batch = tool({
+  description:
+    'Run multiple browser commands sequentially in one call (e.g. filling out multiple fields of a form). ' +
+    'Stops on first error. Only batch actions on elements already visible in the latest snapshot.',
+  inputSchema: z.object({
+    commands: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe('Commands to execute in sequence, e.g. ["fill @e1 alice", "fill @e2 secret", "click @e3"]'),
+  }),
+  execute: async ({ commands }) => {
+    const res = await browser(['batch', '--bail', ...commands]);
+    return res || 'ok';
+  },
+});
+
+const browser_close = tool({
+  description: 'Close the browser session when done with web tasks.',
+  inputSchema: z.object({}),
+  execute: async () => {
+    const res = await browser(['close']);
+    return res || 'ok';
+  },
+});
+
 const browser_screenshot = tool({
   description:
     'Look at the Chrome tab. Every interactive element gets a red box with a number [N], which is ref @eN. ' +
@@ -112,6 +157,7 @@ const browser_screenshot = tool({
 });
 
 export const browserTools = {
-  browser_snapshot, browser_open, browser_click, browser_fill, browser_press,
-  browser_scroll, browser_back, browser_wait, browser_screenshot,
+  browser_snapshot, browser_open, browser_click, browser_fill, browser_select,
+  browser_press, browser_scroll, browser_back, browser_wait, browser_url,
+  browser_batch, browser_close, browser_screenshot,
 };

@@ -3,13 +3,14 @@ export const INSTRUCTIONS = [
   'WEBSITES (Chrome): use the browser_* tools, never screenshot/actions/zoom. The browser tab is already open; ' +
     'use browser_open to go to a site, then browser_snapshot to read it.',
   'Browser rules (from the agent-browser guide): ' +
-    '(1) Act on elements by ref from the LATEST snapshot (browser_click @e12, browser_fill @e5). Refs go stale when the page changes ' +
+    '(1) Act on elements by ref from the LATEST snapshot (browser_click @e12, browser_fill @e5, browser_select @e3 "val"). Refs go stale when the page changes ' +
     '(navigation, submit, a dialog or menu opening), so snapshot again before the next ref action. "Ref not found" means: snapshot again. ' +
     '(2) After an action that changes the page, use browser_wait (text you expect, or part of the URL) instead of guessing. ' +
     '(3) Long pages come in parts: if what you need is not in part 1, read part 2. For content that loads on scroll, browser_scroll down, then snapshot again. ' +
     '(4) If a click does nothing, something may be covering it (popup, banner, menu): find its close button in the snapshot first. ' +
     '(5) If browser_fill does not put the text in a rich editor, click the editor first, then fill again. ' +
-    '(6) Check the result in a new snapshot before saying a step worked. Use browser_screenshot only when you must see something visually.',
+    '(6) Check the result in a new snapshot or browser_url before saying a step worked. Use browser_screenshot only when you must see something visually. ' +
+    '(7) Use browser_batch for sequential actions on the same page (e.g. filling multiple fields). Call browser_close when web work is finished.',
   'OTHER MAC APPS (TextEdit, Finder, ...): open or switch to the app with open_app, then read it with app_snapshot and act by ref ' +
     '(app_press a12 for buttons/menus/checkboxes, app_type a5 "text" for fields). Refs go stale when the window changes: ' +
     'take a new app_snapshot after every action. Keyboard shortcuts (e.g. cmd+s) go through the actions tool.',
