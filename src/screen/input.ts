@@ -2,7 +2,7 @@ import { run, runOk } from '../core/sh';
 import { checkIsInputAllowed, assertSafeKey, checkIsTextSafe } from './guard';
 
 // list all the allowed apps
-export const ALLOWED_APPS = ['Google Chrome', 'TextEdit', 'Finder', 'Calculator', 'WhatsApp', 'Docker Desktop'] as const;
+export const ALLOWED_APPS = ['Google Chrome', 'TextEdit', 'Finder', 'Calculator'] as const;
 
 
 // helper for opening any app in mac or any os

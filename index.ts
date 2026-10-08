@@ -4,6 +4,7 @@ import { screenTools } from './src/screen/tools';
 import { browserTools } from './src/browser/tools';
 import { nativeTools } from './src/native/tools';
 import { log } from './src/core/log';
+import { runOk } from './src/core/sh';
 import { SCREEN } from './src/screen/screen';
 import { compact } from './src/agent/compaction';
 import { INSTRUCTIONS } from './src/agent/prompt';
@@ -44,8 +45,13 @@ const agent = new ToolLoopAgent({
       text: step.text,
       toolCalls: step.toolCalls.map((call) => ({ tool: call.toolName, input: call.input })),
     });
+    for (const call of step.toolCalls) {
+      console.log(`\x1b[36m[Step ${step.stepNumber}]\x1b[0m 🔧 ${call.toolName}`, JSON.stringify(call.input));
+    }
     for (const result of step.toolResults) {
       await log({ step: step.stepNumber, role: 'tool', tool: result.toolName, output: result.output });
+      const preview = typeof result.output === 'string' ? result.output : (result.output as any)?.note || 'ok';
+      console.log(`\x1b[32m[Step ${step.stepNumber}]\x1b[0m ↳ ${result.toolName}:`, preview.length > 120 ? preview.slice(0, 120) + '...' : preview);
     }
   },
 });
@@ -53,10 +59,24 @@ const agent = new ToolLoopAgent({
 await log({ event: 'start', screen: SCREEN });
 
 // run the agent loop
-const { output } = await agent.generate({
-  prompt: process.argv[2] || 'Take a screenshot of the screen',
-});
-console.log(output);
+const promptFile = Bun.file('prompt.txt');
+const prompt = (await promptFile.exists())
+  ? (await promptFile.text()).trim()
+  : process.argv.slice(2).join(' ').trim() || 'Take a screenshot of the screen';
+
+console.log("starting the agent loop");
+
+try {
+  const { output } = await agent.generate({ prompt });
+  console.log('\n--- AGENT FINISHED ---');
+  console.log(output);
+} catch (error) {
+  const errorMessage = error instanceof Error ? Error : "something went wrong";
+  console.log(`error:: ${errorMessage}`)
+}
+
+// bring terminal back to front when done
+await runOk(['open', '-a', 'Terminal']);
 
 
 // compact the messages on every 10th step
