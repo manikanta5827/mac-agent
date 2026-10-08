@@ -4,7 +4,8 @@ import { tool } from 'ai';
 import { log, SHOT_DIR } from '../core/log';
 import { GLASS_HEIGHT, GLASS_WIDTH, IMAGE_HEIGHT, IMAGE_WIDTH, RETINA_FACTOR, scaleToGlassX, scaleToGlassY, toScreenPoint, zoomMap } from './screen';
 import { capture, shotToModel, takeScreenshot } from './shot';
-import { ALLOWED_APPS, MODIFIERS, NAMED_KEYS, click as inputClick, moveMouse, openApp, pressKey, typeText } from './input';
+import { ALLOWED_APPS, MODIFIERS, NAMED_KEYS, click as inputClick, killApp, moveMouse, openApp, pressKey, typeText } from './input';
+import { runHelper } from '../native/helper';
 
 // take screenshot and return it
 const screenshot = tool({
@@ -154,6 +155,39 @@ const open_app = tool({
   },
 });
 
+// helper for closing/killing any app
+const close_app = tool({
+  description: `Quit or force close a Mac app. Allowed apps: ${ALLOWED_APPS.join(', ')}.`,
+  inputSchema: z.object({ app: z.enum(ALLOWED_APPS) }),
+  execute: async ({ app }) => {
+    await killApp(app);
+    await log({ tool: 'close_app', app });
+    return `ok: closed ${app}`;
+  },
+});
+
+// scroll the screen at the current mouse position (or specific x, y)
+const scroll_screen = tool({
+  description: 'Scroll on the screen at the current mouse position or specified coordinates (dy > 0 scrolls down, dy < 0 scrolls up).',
+  inputSchema: z.object({
+    direction: z.enum(['up', 'down']).describe('Direction to scroll'),
+    amount: z.number().int().positive().optional().default(100).describe('Scroll amount in pixels, default 100'),
+    x: z.number().optional().describe('Optional X coordinate in image pixels to move mouse before scrolling'),
+    y: z.number().optional().describe('Optional Y coordinate in image pixels to move mouse before scrolling'),
+    file: z.string().optional().describe('Screenshot or zoom image file you are looking at (if x, y provided)'),
+  }),
+  execute: async ({ direction, amount = 100, x, y, file }) => {
+    if (x !== undefined && y !== undefined) {
+      const point = toScreenPoint(x, y, file);
+      await moveMouse(point.x, point.y);
+    }
+    const dy = direction === 'down' ? amount : -amount;
+    await runHelper<{ ok: boolean }>(['scroll', String(dy)]);
+    await log({ tool: 'scroll_screen', direction, amount, x, y });
+    return `ok: scrolled ${direction} by ${amount}px`;
+  },
+});
+
 // helper for seeing previous screenshot
 const view_screenshot = tool({
   description: 'See an older screenshot or zoom image again, by the file name shown in its tool result (e.g. "1790624481391-14.jpg").',
@@ -181,7 +215,9 @@ export const screenTools = {
   move_mouse,
   type_text,
   press_key,
+  scroll: scroll_screen,
   zoom,
   open_app,
+  close_app,
   view_screenshot,
 };

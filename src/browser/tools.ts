@@ -164,17 +164,21 @@ const browser_close = tool({
   },
 });
 
-// take a scrrenshot
+// take a screenshot
 const browser_screenshot = tool({
   description:
-    'Look at the Chrome tab. Every interactive element gets a red box with a number [N], which is ref @eN. ' +
-    'Only use it when you need to see something visually (icons without names, layout, checking a result); prefer browser_snapshot.',
-  inputSchema: z.object({}),
-  execute: async () => {
+    'Look at the Chrome tab. Set annotate to true to draw red boxes with numbers [N] (ref @eN) around interactive elements. ' +
+    'Only use it when you need to see something visually; prefer browser_snapshot.',
+  inputSchema: z.object({
+    annotate: z.boolean().optional().default(false).describe('If true, annotate interactive elements with red boxes and ref numbers'),
+  }),
+  execute: async ({ annotate = false }) => {
     const file = path.join(SHOT_DIR, `${Date.now()}-browser.jpg`);
-    const legend = (await browser([
-      '--screenshot-format', 'jpeg', '--screenshot-quality', '80', 'screenshot', '--annotate', file,
-    ])) || 'ok';
+    const args = ['--screenshot-format', 'jpeg', '--screenshot-quality', '80', 'screenshot'];
+    if (annotate) args.push('--annotate');
+    args.push(file);
+
+    const legend = (await browser(args)) || 'ok';
     const size = await shrinkToWidth(file, IMAGE_WIDTH);
     return { path: file, ...size, note: `Annotated Chrome screenshot. Label [N] = ref @eN.\n${legend}` };
   },

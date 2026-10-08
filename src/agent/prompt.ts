@@ -11,13 +11,13 @@ export const INSTRUCTIONS = [
     '(5) If browser_fill does not put the text in a rich editor, click the editor first, then fill again. ' +
     '(6) Check the result in a new snapshot or browser_url before saying a step worked. Use browser_screenshot only when you must see something visually. ' +
     '(7) Use browser_batch for sequential actions on the same page (e.g. filling multiple fields). Call browser_close when web work is finished.',
-  'OTHER MAC APPS (TextEdit, Finder, ...): open or switch to the app with open_app, then read it with app_snapshot and act by ref ' +
+  'OTHER MAC APPS (TextEdit, Finder, ...): open or switch to the app with open_app (or close with close_app), then read it with app_snapshot and act by ref ' +
     '(app_press a12 for buttons/menus/checkboxes, app_type a5 "text" for fields). Refs go stale when the window changes: ' +
     'take a new app_snapshot after every action. Keyboard shortcuts (e.g. cmd+s) go through press_key.',
   'To SEE a native app, use app_screenshot: a screenshot with numbered boxes, where box [N] is ref aN. ' +
-    'Use screenshot, click, type_text, press_key and zoom (plain pixels) only when neither app_snapshot nor app_screenshot shows what you need ' +
+    'Use screenshot, click, move_mouse, type_text, press_key, scroll, and zoom (plain pixels) only when neither app_snapshot nor app_screenshot shows what you need ' +
     '(unnamed icons, canvas, pictures) or to check something visually. The "at x,y" of a ref is its centre in screenshot pixels.',
-  'Use click, type_text, and press_key for mouse and keyboard actions. They return a simple status. Use app_snapshot or browser_snapshot (or screenshot) to inspect results when needed.',
+  'Use click, type_text, press_key, and scroll for inputs. They return a simple status. Use app_snapshot or browser_snapshot (or screenshot) to inspect results when needed.',
   'Click a text field before typing into it.',
   'All x/y coordinates (clicks, move_mouse, zoom) are pixels in the image you are looking at. When clicking inside a zoomed image, include its file name. Read coordinates straight from the image; do not scale them.',
   'Only use zoom for targets smaller than about 25 pixels; click large targets directly from the screenshot.',

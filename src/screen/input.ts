@@ -15,6 +15,14 @@ export async function openApp(app: string): Promise<void> {
   await runOk(['open', '-a', app]);
 }
 
+// helper for closing/killing an app in mac
+export async function killApp(app: string): Promise<void> {
+  if (!(ALLOWED_APPS as readonly string[]).includes(app)) {
+    throw new Error(`App "${app}" is not allowed. Allowed: ${ALLOWED_APPS.join(', ')}`);
+  }
+  await runOk(['killall', app]);
+}
+
 // helper for running the cliclick for clicking any buttons acrosss the mac or any os
 async function cliclick(commands: string[]): Promise<void> {
   // run the cliclick with the commands passed

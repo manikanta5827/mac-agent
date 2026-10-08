@@ -53,6 +53,20 @@ if command == "annotate" {
     exit(0)
 }
 
+// scroll <dy> [dx]: scrolls at current mouse position. dy > 0 scrolls down, dy < 0 scrolls up.
+if command == "scroll" {
+    guard args.count >= 2, let dy = Int32(args[1]) else { fail("usage: ax-helper scroll <dy> [dx]") }
+    let dx = args.count >= 3 ? (Int32(args[2]) ?? 0) : 0
+    // In CGEvent scroll wheel, positive wheel1 scrolls up, negative scrolls down
+    if let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: -dy, wheel2: -dx, wheel3: 0) {
+        event.post(tap: .cghidEventTap)
+        output(["ok": true])
+        exit(0)
+    } else {
+        fail("Failed to create scroll event")
+    }
+}
+
 guard AXIsProcessTrusted() else {
     fail("Accessibility permission missing for the app running this (System Settings > Privacy & Security > Accessibility)")
 }
