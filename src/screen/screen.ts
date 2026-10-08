@@ -1,6 +1,6 @@
 import { runOk } from '../core/sh';
 
-export const IMAGE_HEIGHT = 768;
+export const IMAGE_HEIGHT = 720;
 
 async function readMainDisplay(): Promise<{ width: number; height: number }> {
   // read the displays from the system_profiler

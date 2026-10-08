@@ -6,6 +6,7 @@ import { IMAGE_HEIGHT, IMAGE_WIDTH, toScreenPoint } from './screen';
 import { capture, shotToModel, takeScreenshot } from './shot';
 import { ALLOWED_APPS, MODIFIERS, NAMED_KEYS, click, moveMouse, openApp, pressKey, typeText } from './input';
 
+// take screenshot and return it
 const screenshot = tool({
   description: 'Take a screenshot of the whole screen. Do this first.',
   inputSchema: z.object({}),
@@ -49,24 +50,40 @@ const actions = tool({
         continue;
       }
       try {
+        // check is the action is typing text
         if (a.action === 'type_text') {
           if (!a.text) throw new Error('type_text needs text');
           await typeText(a.text);
           await log({ tool: 'type_text', text: a.text });
+
+        // check if it is pressing a key
         } else if (a.action === 'press_key') {
           if (!a.key) throw new Error('press_key needs key');
           await pressKey(a.key, a.modifiers);
           await log({ tool: 'press_key', key: a.key, modifiers: a.modifiers });
+
+        // check if it is waiting action
         } else if (a.action === 'wait') {
           await Bun.sleep(Math.min(Math.max(a.ms ?? 1000, 100), 10_000));
+        
+        // check if it is moving a mouse or clicking anything on screen
         } else {
+          // check if coordinates are given for moving to a position
           if (a.x === undefined || a.y === undefined) throw new Error(`${a.action} needs x and y`);
+
+          // convert the co-ordinates from llm point of view to actual screen co-ordinates
           const point = toScreenPoint(a.x, a.y);
+
+          // move the mouse to co-ordinates if it is move mouse action
           if (a.action === 'move_mouse') await moveMouse(point.x, point.y);
+
+          // else move and click on that co-ordinates
           else await click(CLICK_KINDS[a.action], point.x, point.y);
           await log({ tool: a.action, raw: { x: a.x, y: a.y }, point });
         }
         results.push(`${label}: ok`);
+
+        // sleep for 150ms
         await Bun.sleep(150);
       } catch (err) {
         failed = true;
@@ -76,6 +93,7 @@ const actions = tool({
       }
     }
 
+    // take screenshot after taking any action
     const shot = await takeScreenshot(700);
     return { ...shot, note: `Results:\n${results.join('\n')}\nScreenshot after the actions, ${shot.width}x${shot.height} pixels.` };
   },
@@ -93,11 +111,22 @@ const zoom = tool({
     height: z.number().positive().describe('Rectangle height, extending down from y'),
   }),
   execute: async ({ x, y, width, height }) => {
+    // 1. Clamp width and height so the box stays inside the visible screenshot
+    const safeW = Math.min(width, IMAGE_WIDTH - x);
+    const safeH = Math.min(height, IMAGE_HEIGHT - y);
+
+    // 2. Map corners to screen points
     const topLeft = toScreenPoint(x, y);
-    const bottomRight = toScreenPoint(Math.min(x + width, IMAGE_WIDTH) - 1, Math.min(y + height, IMAGE_HEIGHT) - 1);
-    const region = { ...topLeft, width: bottomRight.x - topLeft.x + 1, height: bottomRight.y - topLeft.y + 1 };
+    const bottomRight = toScreenPoint(x + safeW - 1, y + safeH - 1);
+    const region = {
+      x: topLeft.x,
+      y: topLeft.y,
+      width: bottomRight.x - topLeft.x + 1,
+      height: bottomRight.y - topLeft.y + 1,
+    };
     if (region.width < 2 || region.height < 2) throw new Error('Zoom region is too small');
 
+    // capture specific region at full detail
     const shot = await capture(region);
     await log({ tool: 'zoom', raw: { x, y, width, height }, region, ...shot });
     return { ...shot, note:
@@ -109,6 +138,7 @@ const zoom = tool({
   toModelOutput: ({ output }) => shotToModel(output),
 });
 
+// helper for opening any app
 const open_app = tool({
   description:
     `Open (or bring to front) a Mac app. Allowed apps: ${ALLOWED_APPS.join(', ')}. ` +
@@ -121,16 +151,21 @@ const open_app = tool({
   },
 });
 
+// helper for seeing previous screenshot
 const view_screenshot = tool({
   description: 'See an older screenshot or zoom image again, by the file name shown in its tool result (e.g. "1790624481391-14.jpg").',
   inputSchema: z.object({ file: z.string() }),
   execute: async ({ file }) => {
+    // llm will pass the screenshot filename, check if its valid
     if (file !== path.basename(file) || !file.endsWith('.jpg')) {
       throw new Error('Give only a .jpg file name from a tool result, no folders');
     }
+
+    // check if screenshot exists or not
     const fullPath = path.join(SHOT_DIR, file);
     if (!(await Bun.file(fullPath).exists())) throw new Error(`No screenshot named ${file}`);
 
+    // send the screenshot buffer
     await log({ tool: 'view_screenshot', file });
     return { path: fullPath, note: 'Older image, NOT the current screen.' };
   },
