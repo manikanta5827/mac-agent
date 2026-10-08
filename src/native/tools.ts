@@ -46,7 +46,7 @@ const app_press = tool({
 const app_type = tool({
   description:
     'Type text into a field of a native app, by ref: brings the app to the front, focuses the field, then types. ' +
-    'Typing adds at the cursor; to replace existing text, press cmd+a first with the actions tool.',
+    'Typing adds at the cursor; to replace existing text, press cmd+a first with press_key.',
   inputSchema: z.object({ ref: refInput, text: z.string().min(1) }),
   execute: async ({ ref, text }) => {
     const result = await appAct('focus', ref);

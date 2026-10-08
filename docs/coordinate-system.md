@@ -22,7 +22,7 @@ On macOS (especially with Retina displays), there are three distinct coordinate 
 
 1. **Physical Retina Pixels (e.g. `2880 x 1800`)**: The raw hardware pixel density on Retina screens.
 2. **macOS Screen Points (e.g. `1440 x 900`)**: The logical coordinates macOS, `cliclick`, and the Accessibility API use. Coordinate `(0, 0)` is the top-left corner of the main display.
-3. **Screenshot Pixels (`IMAGE_WIDTH x 768`)**: The resized image fed to the vision LLM. Sending full-resolution images on every step would drastically increase API token costs and inference latency. The height is locked to `768px`, and the width is derived from the display's aspect ratio.
+3. **Screenshot Pixels (`IMAGE_WIDTH x 768`)**: The resized image fed to the vision LLM. Sending full-resolution images on every step would drastically increase API token costs and inference latency.
 
 ---
 
@@ -31,25 +31,67 @@ On macOS (especially with Retina displays), there are three distinct coordinate 
 In `src/screen/screen.ts`:
 
 ```ts
-export const IMAGE_HEIGHT = 768;
+export const IMAGE_HEIGHT = 720;
 export const SCREEN = await readMainDisplay(); // e.g. { width: 1440, height: 900 }
-export const IMAGE_WIDTH = Math.round((IMAGE_HEIGHT * SCREEN.width) / SCREEN.height); // 1229
+export const IMAGE_WIDTH = Math.round((IMAGE_HEIGHT * SCREEN.width) / SCREEN.height);
 
-const scaleX = SCREEN.width / IMAGE_WIDTH;   // 1440 / 1229 ≈ 1.1718
-const scaleY = SCREEN.height / IMAGE_HEIGHT; // 900 / 768 = 1.171875
+const scaleX = SCREEN.width / IMAGE_WIDTH;
+const scaleY = SCREEN.height / IMAGE_HEIGHT;
 ```
-
-Because aspect ratio is preserved, `scaleX` and `scaleY` are identical (~1.1718× on a 16:10 display).
 
 ---
 
-## 3. Coordinate Transformations
+## 3. The Unified Coordinate Model: Full Screenshot vs. Zoom Crop
 
-### Model $\to$ OS: `toScreenPoint(x, y)`
-Used when the LLM looks at a screenshot and decides to click or move the mouse:
+Instead of forcing the LLM to do arithmetic calculations in its prompt when looking at a zoom crop, the system maintains a `zoomMap`:
 
 ```ts
-export function toScreenPoint(x: number, y: number): { x: number; y: number } {
+export type ZoomCrop = { glassX: number; glassY: number };
+export const zoomMap = new Map<string, ZoomCrop>();
+```
+
+### Flow A: Normal Full-Screen Screenshot
+- Captured full-screen and downscaled via `sips`.
+- Scale factor to physical glass is constant: `(SCREEN.width * 2) / IMAGE_WIDTH`.
+- Coordinates scale directly to screen points via `scaleX` and `scaleY`.
+
+### Flow B: Zoom Crop (`zoom` tool)
+- The model specifies a box `(x, y, width, height)` in 720p screenshot pixels.
+- **Step 1: Scale coordinates to 2880 Physical Glass pixels**:
+  `rawGlassX = Math.round(x * scaleToGlassX)`
+  `rawGlassY = Math.round(y * scaleToGlassY)`
+  `rawGlassW = Math.round(width * scaleToGlassX)`
+  `rawGlassH = Math.round(height * scaleToGlassY)`
+- **Step 2: Validate within 2880 Physical Glass limits**:
+  Ensure `(rawGlassX, rawGlassY)` and `(rawGlassX + rawGlassW, rawGlassY + rawGlassH)` do not cross `GLASS_WIDTH` or `GLASS_HEIGHT`. If they exceed the screen, throw an error informing the LLM of the invalid bounds and how to correct them.
+- **Step 3: Convert to macOS Screen Points (divide by RETINA_FACTOR = 2)**:
+  `pointX = Math.round(glassX / 2)`
+  `pointY = Math.round(glassY / 2)`
+  `pointW = Math.round(glassW / 2)`
+  `pointH = Math.round(glassH / 2)`
+- macOS captures the box at **100% full, sharp native Retina detail**:
+  `screencapture -R pointX,pointY,pointW,pointH <file>-zoom.jpg`
+- The origin in 2880 physical glass space `(glassX, glassY)` is registered in `zoomMap.set(filename, { glassX, glassY })`.
+
+### Flow C: Clicking (`toScreenPoint(x, y, file?)`)
+When the model clicks `(x, y)` on an image:
+
+```ts
+export function toScreenPoint(x: number, y: number, file?: string): { x: number; y: number } {
+  const zoomCrop = file ? zoomMap.get(file) : undefined;
+
+  if (zoomCrop) {
+    // 🔍 Zoom image: (x, y) are in 2880 physical glass space.
+    // Add crop origin and divide by 2 to get macOS Screen Points for cliclick:
+    const glassX = zoomCrop.glassX + x;
+    const glassY = zoomCrop.glassY + y;
+    return {
+      x: Math.round(glassX / 2),
+      y: Math.round(glassY / 2),
+    };
+  }
+
+  // 🖥️ Normal screenshot: scale up directly from 720p image to screen points
   const point = { x: Math.round(x * scaleX), y: Math.round(y * scaleY) };
   if (point.x < 0 || point.y < 0 || point.x >= SCREEN.width || point.y >= SCREEN.height) {
     throw new Error(`Point (${x}, ${y}) is outside the screenshot (0..${IMAGE_WIDTH - 1}, 0..${IMAGE_HEIGHT - 1})`);
@@ -58,31 +100,9 @@ export function toScreenPoint(x: number, y: number): { x: number; y: number } {
 }
 ```
 
-**Walkthrough:**
-- Center of LLM's image: `(614, 384)`
-- Multiplied by scale: `614 * 1.1718 ≈ 720`, `384 * 1.171875 = 450`
-- `cliclick` clicks at `(720, 450)` on macOS.
-
 ---
 
-### OS $\to$ Model: `toImagePoint(x, y)`
-Used when macOS tells us where an element is (e.g., via Accessibility API or window bounds) and we need to tell the model where that element sits on the screenshot image:
-
-```ts
-export function toImagePoint(x: number, y: number): { x: number; y: number } {
-  return { x: Math.round(x / scaleX), y: Math.round(y / scaleY) };
-}
-```
-
-**Walkthrough:**
-- A native button is reported at screen point `(720, 450)`.
-- Divided by scale: `720 / 1.1718 ≈ 614`, `450 / 1.171875 ≈ 384`.
-- The model is told the button center is at screenshot pixel `(614, 384)`.
-
----
-
-## 4. Key Rules
-
-1. **Never scale coordinates anywhere else**: `src/screen/screen.ts` is the single source of truth for coordinate conversion.
-2. **Never pass a Screen Point to the model**: All tool prompts, bounding box labels, and click inputs exposed to the LLM are in screenshot pixel space (`0..IMAGE_WIDTH-1`, `0..767`).
-3. **Out-of-bounds protection**: `toScreenPoint` throws an error if the model attempts to click outside the visible screenshot rectangle.
+## 4. Key Advantages
+1. **Zero mental math for the LLM:** The LLM clicks $(x, y)$ directly on whatever image it is viewing.
+2. **Deterministic and stateless:** Passing `file` allows clicking inside an earlier zoom crop even if multiple zooms have occurred.
+3. **Multi-monitor and Retina safe:** Correctly converts physical glass pixels to logical screen points without overflowing screen bounds.

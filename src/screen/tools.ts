@@ -2,9 +2,9 @@ import path from 'node:path';
 import { z } from 'zod';
 import { tool } from 'ai';
 import { log, SHOT_DIR } from '../core/log';
-import { IMAGE_HEIGHT, IMAGE_WIDTH, toScreenPoint } from './screen';
+import { GLASS_HEIGHT, GLASS_WIDTH, IMAGE_HEIGHT, IMAGE_WIDTH, RETINA_FACTOR, scaleToGlassX, scaleToGlassY, toScreenPoint, zoomMap } from './screen';
 import { capture, shotToModel, takeScreenshot } from './shot';
-import { ALLOWED_APPS, MODIFIERS, NAMED_KEYS, click, moveMouse, openApp, pressKey, typeText } from './input';
+import { ALLOWED_APPS, MODIFIERS, NAMED_KEYS, click as inputClick, moveMouse, openApp, pressKey, typeText } from './input';
 
 // take screenshot and return it
 const screenshot = tool({
@@ -12,98 +12,87 @@ const screenshot = tool({
   inputSchema: z.object({}),
   execute: async () => {
     const shot = await takeScreenshot(500);
-    return { ...shot, note: `Screenshot of the screen, ${shot.width}x${shot.height} pixels. Use these image pixels for all x/y coordinates.` };
+    const filename = path.basename(shot.path);
+    return { ...shot, note: `Screenshot of the screen, ${shot.width}x${shot.height} pixels. File: ${filename}. Use these image pixels for all x/y coordinates.` };
   },
   toModelOutput: ({ output }) => shotToModel(output),
 });
 
-const CLICK_KINDS = { left_click: 'left', double_click: 'double', right_click: 'right' } as const;
-
-const actions = tool({
-  description:
-    'Do one or more mouse/keyboard actions in order, then get ONE screenshot of the result. ' +
-    'Send several actions when you do not need to look in between, e.g. ' +
-    'click a search field → type text → press return. Stops at the first failed action; ' +
-    'the rest are reported as skipped.',
+// tool for clicking on a position
+const click_tool = tool({
+  description: 'Click at a position on the screen in image pixels.',
   inputSchema: z.object({
-    actions: z.array(z.object({
-      action: z.enum(['left_click', 'double_click', 'right_click', 'move_mouse', 'type_text', 'press_key', 'wait']),
-      x: z.number().optional().describe('For clicks and move_mouse: X in screenshot pixels'),
-      y: z.number().optional().describe('For clicks and move_mouse: Y in screenshot pixels'),
-      text: z.string().optional().describe('For type_text. Click the field first.'),
-      key: z.string().optional().describe(
-        `For press_key: a single character or one of ${NAMED_KEYS.join(', ')}. ` +
-        'Examples: {key:"return"}, {key:"l", modifiers:["cmd"]} for Cmd+L, {key:"page-down"} to scroll.',
-      ),
-      modifiers: z.array(z.enum(MODIFIERS)).optional().describe('For press_key'),
-      ms: z.number().optional().describe('For wait, 100 to 10000'),
-    })).min(1).max(10),
+    x: z.number().describe('X coordinate in image pixels'),
+    y: z.number().describe('Y coordinate in image pixels'),
+    file: z.string().optional().describe('Screenshot or zoom image file you are looking at'),
+    kind: z.enum(['left', 'double', 'right']).optional().default('left').describe('Click kind: left (default), double, or right'),
   }),
-  execute: async ({ actions }) => {
-    const results: string[] = [];
-    let failed = false;
+  execute: async ({ x, y, file, kind = 'left' }) => {
+    // cnvert the llm co-ordinates to glass to points
+    const point = toScreenPoint(x, y, file);
 
-    for (const [i, a] of actions.entries()) {
-      const label = `${i + 1}. ${a.action}`;
-      if (failed) {
-        results.push(`${label}: skipped`);
-        continue;
-      }
-      try {
-        // check is the action is typing text
-        if (a.action === 'type_text') {
-          if (!a.text) throw new Error('type_text needs text');
-          await typeText(a.text);
-          await log({ tool: 'type_text', text: a.text });
-
-        // check if it is pressing a key
-        } else if (a.action === 'press_key') {
-          if (!a.key) throw new Error('press_key needs key');
-          await pressKey(a.key, a.modifiers);
-          await log({ tool: 'press_key', key: a.key, modifiers: a.modifiers });
-
-        // check if it is waiting action
-        } else if (a.action === 'wait') {
-          await Bun.sleep(Math.min(Math.max(a.ms ?? 1000, 100), 10_000));
-        
-        // check if it is moving a mouse or clicking anything on screen
-        } else {
-          // check if coordinates are given for moving to a position
-          if (a.x === undefined || a.y === undefined) throw new Error(`${a.action} needs x and y`);
-
-          // convert the co-ordinates from llm point of view to actual screen co-ordinates
-          const point = toScreenPoint(a.x, a.y);
-
-          // move the mouse to co-ordinates if it is move mouse action
-          if (a.action === 'move_mouse') await moveMouse(point.x, point.y);
-
-          // else move and click on that co-ordinates
-          else await click(CLICK_KINDS[a.action], point.x, point.y);
-          await log({ tool: a.action, raw: { x: a.x, y: a.y }, point });
-        }
-        results.push(`${label}: ok`);
-
-        // sleep for 150ms
-        await Bun.sleep(150);
-      } catch (err) {
-        failed = true;
-        const message = err instanceof Error ? err.message : String(err);
-        await log({ tool: a.action, input: a, error: message });
-        results.push(`${label}: error (${message})`);
-      }
-    }
-
-    // take screenshot after taking any action
-    const shot = await takeScreenshot(700);
-    return { ...shot, note: `Results:\n${results.join('\n')}\nScreenshot after the actions, ${shot.width}x${shot.height} pixels.` };
+    // click on that point
+    await inputClick(kind, point.x, point.y);
+    await log({ tool: 'click', raw: { x, y }, point, file, kind });
+    return `ok: clicked (${kind}) at (${x}, ${y})`;
   },
-  toModelOutput: ({ output }) => shotToModel(output),
 });
 
+// tool for moving mouse
+const move_mouse = tool({
+  description: 'Move mouse cursor to a position on the screen without clicking.',
+  inputSchema: z.object({
+    x: z.number().describe('X coordinate in image pixels'),
+    y: z.number().describe('Y coordinate in image pixels'),
+    file: z.string().optional().describe('Screenshot or zoom image file you are looking at'),
+  }),
+  execute: async ({ x, y, file }) => {
+    // cnvert the llm co-ordinates to glass to points
+    const point = toScreenPoint(x, y, file);
+
+    // move the mouse
+    await moveMouse(point.x, point.y);
+    await log({ tool: 'move_mouse', raw: { x, y }, point, file });
+    return `ok: moved mouse to (${x}, ${y})`;
+  },
+});
+
+// tool for typing text
+const type_text = tool({
+  description: 'Type text into the currently focused field. Click the text field first to focus it.',
+  inputSchema: z.object({
+    text: z.string().min(1).describe('Text to type'),
+  }),
+  execute: async ({ text }) => {
+    // type the text on the field
+    await typeText(text);
+    await log({ tool: 'type_text', text });
+    return `ok: typed "${text}"`;
+  },
+});
+
+// tool for pressing keyboard keys
+const press_key = tool({
+  description:
+    `Press a key or keyboard shortcut (e.g. "return", "tab", "esc", or with modifiers like ["cmd"] + "s"). ` +
+    `Keys: a single character or one of: ${NAMED_KEYS.join(', ')}.`,
+  inputSchema: z.object({
+    key: z.string().min(1).describe('Key to press, e.g. "return", "tab", "esc", "c", "v", "s", "space"'),
+    modifiers: z.array(z.enum(MODIFIERS)).optional().describe('Modifiers to hold down, e.g. ["cmd"], ["cmd", "shift"]'),
+  }),
+  execute: async ({ key, modifiers }) => {
+    // press the key
+    await pressKey(key, modifiers);
+    await log({ tool: 'press_key', key, modifiers });
+    return `ok: pressed ${modifiers?.length ? modifiers.join('+') + '+' : ''}${key}`;
+  },
+});
+
+// tool for zoom screenshort
 const zoom = tool({
   description:
     'Look closer at a rectangle of the screen, returned at full detail. Use it for small targets. ' +
-    'Coordinates for clicks are still full-screen coordinates, not coordinates inside the zoomed image.',
+    'To click something in the zoomed image, call actions with file set to the zoom image file name and (x, y) directly from that image.',
   inputSchema: z.object({
     x: z.number().describe('X of the rectangle\'s TOP-LEFT corner, in screenshot pixels'),
     y: z.number().describe('Y of the rectangle\'s TOP-LEFT corner, in screenshot pixels'),
@@ -111,28 +100,42 @@ const zoom = tool({
     height: z.number().positive().describe('Rectangle height, extending down from y'),
   }),
   execute: async ({ x, y, width, height }) => {
-    // 1. Clamp width and height so the box stays inside the visible screenshot
-    const safeW = Math.min(width, IMAGE_WIDTH - x);
-    const safeH = Math.min(height, IMAGE_HEIGHT - y);
+    // 1. Convert 720p coordinates to 2880 physical glass pixels
+    const rawGlassX = Math.round(x * scaleToGlassX);
+    const rawGlassY = Math.round(y * scaleToGlassY);
+    const rawGlassW = Math.round(width * scaleToGlassX);
+    const rawGlassH = Math.round(height * scaleToGlassY);
 
-    // 2. Map corners to screen points
-    const topLeft = toScreenPoint(x, y);
-    const bottomRight = toScreenPoint(x + safeW - 1, y + safeH - 1);
-    const region = {
-      x: topLeft.x,
-      y: topLeft.y,
-      width: bottomRight.x - topLeft.x + 1,
-      height: bottomRight.y - topLeft.y + 1,
-    };
+    // 2. Validate bounds in 2880 physical glass limits
+    if (rawGlassX < 0 || rawGlassY < 0 || rawGlassX >= GLASS_WIDTH || rawGlassY >= GLASS_HEIGHT) {
+      throw new Error(`Zoom top-left corner (${x}, ${y}) is outside the screen bounds (0..${IMAGE_WIDTH - 1}, 0..${IMAGE_HEIGHT - 1})`);
+    }
+    if (rawGlassX + rawGlassW > GLASS_WIDTH || rawGlassY + rawGlassH > GLASS_HEIGHT) {
+      throw new Error(
+        `Zoom region extends outside the screen. Right edge reaches ${Math.round((rawGlassX + rawGlassW) / scaleToGlassX)} (max ${IMAGE_WIDTH}), bottom edge reaches ${Math.round((rawGlassY + rawGlassH) / scaleToGlassY)} (max ${IMAGE_HEIGHT}). Reduce width/height or adjust (x, y).`
+      );
+    }
+
+    // 3. Convert physical glass pixels to macOS screen points for screencapture (divide by 2)
+    const pointX = Math.round(rawGlassX / RETINA_FACTOR);
+    const pointY = Math.round(rawGlassY / RETINA_FACTOR);
+    const pointW = Math.max(1, Math.round(rawGlassW / RETINA_FACTOR));
+    const pointH = Math.max(1, Math.round(rawGlassH / RETINA_FACTOR));
+
+    const region = { x: pointX, y: pointY, width: pointW, height: pointH };
     if (region.width < 2 || region.height < 2) throw new Error('Zoom region is too small');
 
-    // capture specific region at full detail
+    // 4. Capture native region at full Retina detail
     const shot = await capture(region);
-    await log({ tool: 'zoom', raw: { x, y, width, height }, region, ...shot });
-    return { ...shot, note:
-        `Zoomed view of screenshot region x=${x} y=${y} w=${width} h=${height}, shown at ${shot.width}x${shot.height} pixels. ` +
-        `To click something at zoom pixel (px, py), use screenshot x = ${x} + px × ${(width / shot.width).toFixed(4)}, ` +
-        `y = ${y} + py × ${(height / shot.height).toFixed(4)}.`,
+    const filename = path.basename(shot.path);
+
+    // 5. Store 2880 physical glass origin in zoomMap
+    zoomMap.set(filename, { rawGlassX, rawGlassY });
+
+    await log({ tool: 'zoom', raw: { x, y, width, height }, glass: { rawGlassX, rawGlassY, rawGlassW, rawGlassH }, region, ...shot });
+    return {
+      ...shot,
+      note: `Zoomed view of region x=${x} y=${y} w=${width} h=${height}, shown at ${shot.width}x${shot.height} pixels. File: ${filename}. To click inside this zoom, pass file: "${filename}" and (x, y) directly from this image.`,
     };
   },
   toModelOutput: ({ output }) => shotToModel(output),
@@ -172,4 +175,13 @@ const view_screenshot = tool({
   toModelOutput: ({ output }) => shotToModel(output),
 });
 
-export const screenTools = { screenshot, actions, zoom, open_app, view_screenshot };
+export const screenTools = {
+  screenshot,
+  click: click_tool,
+  move_mouse,
+  type_text,
+  press_key,
+  zoom,
+  open_app,
+  view_screenshot,
+};

@@ -16,6 +16,7 @@
     "zod": "^4.6.5"
   },
   "scripts": {
+    "typecheck": "bunx tsc --noEmit",
     "build:ax": "mkdir -p bin && swiftc -O native/*.swift -o bin/ax-helper"
   }
 }
