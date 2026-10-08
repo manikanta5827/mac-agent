@@ -15,7 +15,7 @@ export const openrouter = createOpenRouter({ apiKey: process.env.LLM_API_KEY });
 
 // constants
 const MAX_ITERATIONS = 70;
-const CUT_EVERY_STEPS = 10;
+const CUT_EVERY_STEPS = 7;
 const KEEP_IMAGES = 3;
 
 // create the tool loop agent

@@ -67,6 +67,7 @@ const browser_click = tool({
   inputSchema: z.object({ ref: refInput }),
   execute: async ({ ref }) => {
     const res = await browser(['click', toRef(ref)]);
+    await Bun.sleep(300);
     return res || 'ok';
   },
 });
@@ -77,6 +78,7 @@ const browser_fill = tool({
   inputSchema: z.object({ ref: refInput, text: z.string().min(1) }),
   execute: async ({ ref, text }) => {
     const res = await browser(['fill', toRef(ref), safeArg(text)]);
+    await Bun.sleep(300);
     return res || 'ok';
   },
 });
