@@ -1,9 +1,12 @@
 import { mkdir, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 
+const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '');
 const LOG_DIR = path.join(import.meta.dir, '..', '..', 'logs');
-export const SHOT_DIR = path.join(LOG_DIR, 'shots');
-const AGENT_LOG = path.join(LOG_DIR, 'agent.jsonl');
+
+export const RUN_DIR = path.join(LOG_DIR, `run-${timestamp}`);
+export const SHOT_DIR = path.join(RUN_DIR, 'shots');
+const AGENT_LOG = path.join(RUN_DIR, 'agent.jsonl');
 
 // create the screenshots directory to store the screenshots
 await mkdir(SHOT_DIR, { recursive: true });
