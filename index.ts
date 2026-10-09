@@ -79,7 +79,7 @@ try {
 await runOk(['open', '-a', 'Terminal']);
 
 
-// compact the messages on every 10th step
+// compact the messages on every CUT_EVERY_STEPS step
 async function prepareStep({ messages, stepNumber }: { messages: ModelMessage[]; stepNumber: number }) {
   if (stepNumber === 0) {
     await log({ role: 'user', content: messages.findLast((m) => m.role === 'user')?.content });
@@ -87,7 +87,13 @@ async function prepareStep({ messages, stepNumber }: { messages: ModelMessage[];
   }
   if (stepNumber % CUT_EVERY_STEPS !== 0) return {};
 
-  const { messages: compacted, imagesBefore, imagesAfter } = compact(messages, KEEP_IMAGES);
-  await log({ event: 'compaction', step: stepNumber, imagesBefore, imagesAfter });
+  const summaryModel = openrouter('deepseek/deepseek-v4.1-flash') as LanguageModel;
+  const { messages: compacted, imagesBefore, imagesAfter, summarized } = await compact(
+    messages,
+    KEEP_IMAGES,
+    summaryModel,
+    10, // keep the last 10 turns in full fidelity
+  );
+  await log({ event: 'compaction', step: stepNumber, imagesBefore, imagesAfter, summarized });
   return { messages: compacted };
 }
